@@ -4,3 +4,11 @@
 *.tfplan
 crash.log
 .env
+task
+taskaiterraformtestagent.md
+.tf-test-agent/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/

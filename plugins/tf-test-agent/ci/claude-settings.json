@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "allow": [
+      "Skill",
+      "Edit(modules/*/tests/**)",
+      "Edit(stacks/*/tests/**)",
+      "Bash(tf-run-tests:*)",
+      "Bash(tf-mutate:*)"
+    ],
+    "deny": [
+      "Read(//proc/**)"
+    ]
+  },
+  "env": {
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "DISABLE_AUTOUPDATER": "1"
+  }
+}

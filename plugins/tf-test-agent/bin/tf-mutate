@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Proves that a test catches a regression.
+
+A mutation replaces one exact piece of a .tf file with a plausible wrong
+alternative. The mutation runs on a temporary copy of the repository; the
+working tree is never changed. A test is proven when the mutation makes it fail.
+
+  tf-mutate <target> <file> <find> <replace> [--expect RUN]
+  tf-mutate --report report.json      # every mutation listed in an agent report
+
+The result is printed as JSON. Status per mutation:
+  killed    the expected run (or any run, without --expect) failed
+  survived  all runs still pass, so the test does not catch this change
+  invalid   the mutation is not usable: not found exactly once, or the mutated
+            code does not validate (a syntax error would "kill" every test)
+"""
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+TIMEOUT = 600
+
+
+def clean_env(home):
+    env = {"PATH": os.environ["PATH"], "HOME": home, "TF_IN_AUTOMATION": "1", "TF_INPUT": "0"}
+    if os.environ.get("TF_PLUGIN_CACHE_DIR"):
+        env["TF_PLUGIN_CACHE_DIR"] = os.environ["TF_PLUGIN_CACHE_DIR"]
+    return env
+
+
+def terraform(args, cwd, home):
+    return subprocess.run(
+        ["terraform", *args], cwd=cwd, env=clean_env(home),
+        capture_output=True, text=True, timeout=TIMEOUT,
+    )
+
+
+def check_paths(root, target, file):
+    if not (target.startswith("modules/") or target.startswith("stacks/")):
+        return "target must be modules/<name> or stacks/<name>"
+    if not (root / target).is_dir():
+        return f"target {target} does not exist"
+    path = (root / file).resolve()
+    if root not in path.parents or not path.is_file():
+        return f"file {file} is not a file in the repository"
+    if path.suffix != ".tf" or "tests" in path.relative_to(root).parts:
+        return "only .tf files outside tests/ can be mutated"
+    return None
+
+
+def prove(root, target, file, find, replace, expect=None):
+    result = {"target": target, "file": file, "find": find, "replace": replace, "expect": expect}
+
+    problem = check_paths(root, target, file)
+    if problem is None:
+        source = (root / file).read_text()
+        if find == replace:
+            problem = "find and replace are equal"
+        elif source.count(find) != 1:
+            problem = f"find must occur exactly once in {file}, found {source.count(find)}"
+    if problem:
+        return {**result, "status": "invalid", "detail": problem}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        copy = Path(tmp) / "repo"
+        home = Path(tmp) / "home"
+        home.mkdir()
+        shutil.copytree(root, copy, ignore=shutil.ignore_patterns(".git", ".terraform", ".tf-test-agent"))
+        (copy / file).write_text(source.replace(find, replace, 1))
+
+        workdir = copy / target
+        if (root / target / ".terraform").is_dir():
+            # Reuse providers and module links of the original instead of a new init.
+            (workdir / ".terraform").symlink_to(root / target / ".terraform")
+        else:
+            init = terraform(["init", "-backend=false", "-no-color"], workdir, str(home))
+            if init.returncode != 0:
+                return {**result, "status": "invalid", "detail": "terraform init failed: " + init.stderr[-500:]}
+
+        validate = terraform(["validate", "-no-color"], workdir, str(home))
+        if validate.returncode != 0:
+            detail = (validate.stderr or validate.stdout)[-500:]
+            return {**result, "status": "invalid", "detail": "mutated code does not validate: " + detail}
+
+        test = terraform(["test", "-json", "-no-color"], workdir, str(home))
+
+    runs = {}
+    for line in test.stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        run = event.get("test_run")
+        if event.get("type") == "test_run" and run and run.get("progress") == "complete":
+            runs[run["run"]] = run["status"]
+
+    failed = sorted(name for name, status in runs.items() if status in ("fail", "error"))
+    if expect is not None and expect not in runs:
+        return {**result, "status": "invalid", "detail": f"run {expect} was not executed", "failed_runs": failed}
+
+    killed = expect in failed if expect else bool(failed)
+    return {**result, "status": "killed" if killed else "survived", "failed_runs": failed}
+
+
+def from_report(root, report_path):
+    report = json.loads(Path(report_path).read_text())
+    results = []
+    for target in report.get("targets", []):
+        for run in target.get("runs", []):
+            mutations = run.get("mutations", [])
+            if not mutations:
+                results.append({"target": target["path"], "expect": run["name"], "status": "missing",
+                                "detail": "no mutation was given for this run"})
+            for m in mutations:
+                results.append(prove(root, target["path"], m["file"], m["find"], m["replace"], run["name"]))
+    return results
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--report", help="agent report with mutations to prove")
+    parser.add_argument("--expect", help="run that must fail under the mutation")
+    parser.add_argument("args", nargs="*", metavar="target file find replace")
+    opts = parser.parse_args()
+    root = Path.cwd().resolve()
+
+    if opts.report:
+        print(json.dumps(from_report(root, opts.report), indent=2))
+        return 0
+    if len(opts.args) != 4:
+        parser.error("expected: target file find replace")
+    result = prove(root, *opts.args, expect=opts.expect)
+    print(json.dumps(result, indent=2))
+    return {"killed": 0, "survived": 1}.get(result["status"], 2)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

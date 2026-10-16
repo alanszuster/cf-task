@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Checks formatting, validates and runs `terraform test` for one module or stack.
+# It is the only command the agent may run. Terraform runs with a clean
+# environment, so API keys and tokens of the caller are not passed to it.
+set -euo pipefail
+
+target="${1:?usage: tf-run-tests <modules/name | stacks/name>}"
+root="$(pwd -P)"
+
+case "$target" in
+  modules/* | stacks/*) ;;
+  *) echo "tf-run-tests: target must be modules/<name> or stacks/<name>" >&2; exit 2 ;;
+esac
+
+dir="$(realpath -e -- "$root/$target")"
+case "$dir" in
+  "$root"/modules/* | "$root"/stacks/*) ;;
+  *) echo "tf-run-tests: $target is outside the repository" >&2; exit 2 ;;
+esac
+
+tf_home="$(mktemp -d)"
+trap 'rm -rf "$tf_home"' EXIT
+
+tf() {
+  env -i \
+    PATH="$PATH" \
+    HOME="$tf_home" \
+    TF_IN_AUTOMATION=1 \
+    TF_INPUT=0 \
+    ${TF_PLUGIN_CACHE_DIR:+TF_PLUGIN_CACHE_DIR="$TF_PLUGIN_CACHE_DIR"} \
+    timeout 600 terraform -chdir="$dir" "$@"
+}
+
+# Use the committed lock file as is, so a test run never changes provider versions.
+lockfile_mode=()
+[[ -f "$dir/.terraform.lock.hcl" ]] && lockfile_mode=(-lockfile=readonly)
+
+# Only the test files are checked: formatting of the code under test belongs to
+# the author of the change, not to the agent.
+if [[ -d "$dir/tests" ]]; then
+  echo "== fmt"
+  tf fmt -check -diff -recursive tests
+fi
+echo "== init"
+tf init -backend=false -no-color "${lockfile_mode[@]}" >/dev/null
+echo "== validate"
+tf validate -no-color
+echo "== test"
+tf test -no-color

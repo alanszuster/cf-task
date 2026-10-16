@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "tf-test-agent report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "targets", "findings"],
+  "properties": {
+    "summary": { "type": "string", "maxLength": 1500 },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "decision", "reason", "test_files", "runs", "last_result", "not_covered"],
+        "properties": {
+          "path": { "type": "string", "pattern": "^(modules|stacks)/[a-z0-9-]+$" },
+          "decision": { "enum": ["create", "update", "skip"] },
+          "reason": { "type": "string", "maxLength": 600 },
+          "test_files": { "type": "array", "items": { "type": "string" } },
+          "runs": {
+            "description": "Run blocks the agent added or changed in this session.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "status", "proves", "mutations"],
+              "properties": {
+                "name": { "type": "string" },
+                "status": { "enum": ["added", "changed"] },
+                "proves": { "type": "string", "maxLength": 300 },
+                "mutations": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["file", "find", "replace"],
+                    "properties": {
+                      "file": { "type": "string" },
+                      "find": { "type": "string", "minLength": 1 },
+                      "replace": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "last_result": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["passed", "failed"],
+            "properties": {
+              "passed": { "type": "integer", "minimum": 0 },
+              "failed": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "not_covered": { "type": "array", "items": { "type": "string", "maxLength": 300 } }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 15,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "title", "file", "line", "evidence", "why", "recommendation", "in_diff"],
+        "properties": {
+          "severity": { "enum": ["high", "medium", "low", "info"] },
+          "title": { "type": "string", "maxLength": 120 },
+          "file": { "type": "string" },
+          "line": { "type": "integer", "minimum": 1 },
+          "evidence": { "type": "string", "maxLength": 600 },
+          "why": { "type": "string", "maxLength": 600 },
+          "recommendation": { "type": "string", "maxLength": 1000 },
+          "in_diff": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

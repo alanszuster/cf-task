@@ -1,0 +1,10 @@
+{
+  "name": "tf-test-agent",
+  "version": "0.1.0",
+  "description": "Writes and updates terraform test files for changed Terraform code, proves each test with a mutation, and reports findings for reviewers.",
+  "author": {
+    "name": "Alan Szuster"
+  },
+  "license": "MIT",
+  "keywords": ["terraform", "testing", "code-review", "ci"]
+}

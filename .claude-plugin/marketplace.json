@@ -1,0 +1,13 @@
+{
+  "name": "tf-platform-base",
+  "owner": {
+    "name": "Alan Szuster"
+  },
+  "plugins": [
+    {
+      "name": "tf-test-agent",
+      "source": "./plugins/tf-test-agent",
+      "description": "Terraform test agent for pull requests."
+    }
+  ]
+}

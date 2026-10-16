@@ -1,0 +1,290 @@
+name: tf-test-agent
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "modules/**"
+      - "stacks/**"
+
+permissions: {}
+
+concurrency:
+  group: tf-test-agent-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  TERRAFORM_VERSION: 1.12.2
+  CLAUDE_CODE_VERSION: 2.1.301
+  # The agent, its skills, permissions and CI scripts always come from the base
+  # branch. A pull request cannot change the rules it is checked by.
+  TRUSTED: .tf-test-agent/trusted
+  PLUGIN: .tf-test-agent/trusted/plugins/tf-test-agent
+  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+jobs:
+  analyze:
+    # Pull requests from forks get no secrets; drafts are not ready for review.
+    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: ${{ env.TRUSTED }}
+          persist-credentials: false
+      - id: targets
+        name: Find changed modules and stacks
+        run: |
+          # Changes only to tests or documentation do not need the agent.
+          dirs="$(git diff --name-only "$BASE_SHA...$HEAD_SHA" -- modules stacks \
+            | grep -Ev '/tests/|\.md$' | cut -d/ -f1-2 | sort -u || true)"
+          # A stack is a target too when it calls a changed module.
+          for module in $(grep '^modules/' <<< "$dirs" || true); do
+            dirs+=$'\n'"$(grep -l "\"../../$module\"" stacks/*/*.tf | xargs -r dirname)"
+          done
+          targets="$(sort -u <<< "$dirs" | while read -r d; do if [ -d "$d" ]; then echo "$d"; fi; done | jq -R -s -c 'split("\n") | map(select(length > 0))')"
+          echo "Targets: $targets"
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
+  agent:
+    needs: analyze
+    if: needs.analyze.outputs.targets != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      TARGETS: ${{ needs.analyze.outputs.targets }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: ${{ env.TRUSTED }}
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Install Claude Code
+        run: npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      - name: Prepare the agent's input
+        run: |
+          # Agent instructions from the pull request would be loaded as context. Remove them.
+          find . -path ./.tf-test-agent -prune -o \
+            \( -name CLAUDE.md -o -name CLAUDE.local.md -o -name AGENTS.md -o -name .claude \) -print \
+            -exec rm -rf {} +
+          git diff "$BASE_SHA...$HEAD_SHA" -- modules stacks > .tf-test-agent/pr.diff
+          {
+            echo "mode: pr"
+            echo "targets:"
+            jq -r '.[] | "- " + .' <<< "$TARGETS"
+            echo "diff: .tf-test-agent/pr.diff"
+            echo
+            echo "Work through every target and return the report."
+          } > .tf-test-agent/prompt.txt
+          cat .tf-test-agent/prompt.txt
+
+      - name: Run the agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          MODEL: ${{ vars.TF_TEST_AGENT_MODEL || 'sonnet' }}
+          MAX_USD: ${{ vars.TF_TEST_AGENT_MAX_USD || '5' }}
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/tf-plugins
+        run: |
+          [ -n "$ANTHROPIC_API_KEY" ] || unset ANTHROPIC_API_KEY
+          [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || unset CLAUDE_CODE_OAUTH_TOKEN
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          status=0
+          claude -p "$(cat .tf-test-agent/prompt.txt)" \
+            --plugin-dir "$PLUGIN" \
+            --agent tf-test-agent:test-engineer \
+            --settings "$PLUGIN/ci/claude-settings.json" \
+            --setting-sources user \
+            --model "$MODEL" \
+            --max-turns 80 \
+            --max-budget-usd "$MAX_USD" \
+            --json-schema "$(cat "$PLUGIN/schemas/report.schema.json")" \
+            --output-format stream-json --verbose \
+            > .tf-test-agent/transcript.jsonl || status=$?
+          jq -c 'select(.type == "result") | .structured_output // empty' .tf-test-agent/transcript.jsonl > .tf-test-agent/report.json
+          jq -r 'select(.type == "result") | "result: \(.subtype), turns: \(.num_turns), cost: \(.total_cost_usd)"' .tf-test-agent/transcript.jsonl
+          git add --intent-to-add --all -- modules stacks
+          git diff --binary -- modules stacks > .tf-test-agent/agent.patch
+          git diff --stat -- modules stacks
+          [ "$status" -eq 0 ] || echo "::warning::The agent exited with status $status."
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: agent
+          path: |
+            .tf-test-agent/report.json
+            .tf-test-agent/agent.patch
+            .tf-test-agent/transcript.jsonl
+            .tf-test-agent/prompt.txt
+          retention-days: 14
+
+  verify:
+    # Runs the pull request's code and the agent's tests, so it has no secrets
+    # and no write access. It trusts nothing the agent says about its results.
+    needs: [analyze, agent]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      TARGETS: ${{ needs.analyze.outputs.targets }}
+    outputs:
+      ok: ${{ steps.verify.outputs.ok }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: ${{ env.TRUSTED }}
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agent
+          path: .tf-test-agent/agent
+
+      - name: Apply the agent's patch
+        run: |
+          if [ -s .tf-test-agent/agent/agent.patch ]; then
+            git apply .tf-test-agent/agent/agent.patch
+          fi
+          git status --short -- modules stacks
+
+      - id: verify
+        name: Verify scope, tests and mutation proof
+        env:
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/tf-plugins
+        run: |
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          if python3 "$PLUGIN/ci/verify.py" --targets "$TARGETS" \
+               --report .tf-test-agent/agent/report.json --out .tf-test-agent/verify.json; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: verify
+          path: .tf-test-agent/verify.json
+          retention-days: 14
+
+  publish:
+    # The only job with write access. It runs no Terraform and no code from the
+    # pull request: it applies a verified patch and posts results.
+    needs: [analyze, agent, verify]
+    if: always() && needs.analyze.result == 'success' && needs.analyze.outputs.targets != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: write
+    env:
+      TARGETS: ${{ needs.analyze.outputs.targets }}
+      VERIFIED: ${{ needs.verify.outputs.ok }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: ${{ env.TRUSTED }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          name: agent
+          path: .tf-test-agent/agent
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          name: verify
+          path: .tf-test-agent
+
+      - id: patch
+        name: Apply the verified patch
+        if: env.VERIFIED == 'true'
+        run: |
+          if [ "$(git rev-parse HEAD)" != "$HEAD_SHA" ]; then
+            echo "::warning::The branch moved during the run. Nothing committed; the next run covers the new commits."
+          elif [ -s .tf-test-agent/agent/agent.patch ]; then
+            git apply .tf-test-agent/agent/agent.patch
+            # Same scope check as in verify, here without Terraform: defense in depth.
+            python3 "$PLUGIN/ci/verify.py" --scope-only --targets "$TARGETS" \
+              --report .tf-test-agent/agent/report.json --out .tf-test-agent/scope.json
+            echo "apply=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: commit
+        if: steps.patch.outputs.apply == 'true'
+        uses: stefanzweifel/git-auto-commit-action@4a55954c782fc1ea30b9056cd3e7a2b40ca8887d # v7.2.0
+        with:
+          file_pattern: modules stacks
+          commit_message: |
+            test: add tests from tf-test-agent
+
+            Verified by CI: scope, test run and mutation proof.
+            Run: ${{ env.RUN_URL }}
+          commit_author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+
+      - id: render
+        name: Render results
+        env:
+          COMMIT: ${{ steps.commit.outputs.commit_hash }}
+        run: |
+          python3 "$PLUGIN/ci/render.py" --targets "$TARGETS" \
+            --report .tf-test-agent/agent/report.json --verify .tf-test-agent/verify.json \
+            --transcript .tf-test-agent/agent/transcript.jsonl \
+            --comment .tf-test-agent/comment.md --check .tf-test-agent/check.json \
+            --commit "$COMMIT" --run-url "$RUN_URL"
+          cat .tf-test-agent/comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          header: tf-test-agent
+          path: .tf-test-agent/comment.md
+
+      - uses: LouisBrunner/checks-action@937cbbcde3259005b50746dc91cde29098aac2ff # v3.1.0
+        with:
+          token: ${{ github.token }}
+          name: tf-test-agent
+          sha: ${{ steps.commit.outputs.commit_hash || env.HEAD_SHA }}
+          conclusion: ${{ steps.render.outputs.conclusion }}
+          output: ${{ steps.render.outputs.output }}
+          annotations: ${{ steps.render.outputs.annotations }}
