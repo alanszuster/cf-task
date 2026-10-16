@@ -35,15 +35,30 @@ tf() {
 lockfile_mode=()
 [[ -f "$dir/.terraform.lock.hcl" ]] && lockfile_mode=(-lockfile=readonly)
 
+# Output is short on success and complete on failure: everything printed here
+# ends up in the agent's context.
+step() {
+  local name="$1"
+  shift
+  local out
+  if ! out="$("$@" 2>&1)"; then
+    echo "$name failed:"
+    echo "$out"
+    exit 1
+  fi
+}
+
 # Only the test files are checked: formatting of the code under test belongs to
 # the author of the change, not to the agent.
 if [[ -d "$dir/tests" ]]; then
-  echo "== fmt"
-  tf fmt -check -diff -recursive tests
+  step fmt tf fmt -check -diff -recursive tests
 fi
-echo "== init"
-tf init -backend=false -no-color "${lockfile_mode[@]}" >/dev/null
-echo "== validate"
-tf validate -no-color
-echo "== test"
-tf test -no-color
+step init tf init -backend=false -no-color "${lockfile_mode[@]}"
+step validate tf validate -no-color
+
+if out="$(tf test -no-color 2>&1)"; then
+  grep -E '^(Success|Failure)!' <<<"$out" || echo "$out"
+else
+  echo "$out"
+  exit 1
+fi

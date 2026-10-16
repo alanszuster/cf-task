@@ -33,6 +33,7 @@ jobs:
       contents: read
     outputs:
       targets: ${{ steps.targets.outputs.targets }}
+      from: ${{ steps.targets.outputs.from }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,9 +47,20 @@ jobs:
           persist-credentials: false
       - id: targets
         name: Find changed modules and stacks
+        env:
+          ACTION: ${{ github.event.action }}
+          BEFORE: ${{ github.event.before }}
         run: |
+          # On a new push only the new commits need analysis: tests for the earlier
+          # ones are already on the branch. After a force push, analyze everything.
+          from="$BASE_SHA"
+          if [ "$ACTION" = synchronize ] \
+             && git merge-base --is-ancestor "$BEFORE" "$HEAD_SHA" 2>/dev/null; then
+            from="$BEFORE"
+          fi
+          echo "from=$from" >> "$GITHUB_OUTPUT"
           # Changes only to tests or documentation do not need the agent.
-          dirs="$(git diff --name-only "$BASE_SHA...$HEAD_SHA" -- modules stacks \
+          dirs="$(git diff --name-only "$from...$HEAD_SHA" -- modules stacks \
             | grep -Ev '/tests/|\.md$' | cut -d/ -f1-2 | sort -u || true)"
           # A stack is a target too when it calls a changed module.
           for module in $(grep '^modules/' <<< "$dirs" || true); do
@@ -67,6 +79,7 @@ jobs:
       contents: read
     env:
       TARGETS: ${{ needs.analyze.outputs.targets }}
+      FROM_SHA: ${{ needs.analyze.outputs.from }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -92,23 +105,17 @@ jobs:
           find . -path ./.tf-test-agent -prune -o \
             \( -name CLAUDE.md -o -name CLAUDE.local.md -o -name AGENTS.md -o -name .claude \) -print \
             -exec rm -rf {} +
-          git diff "$BASE_SHA...$HEAD_SHA" -- modules stacks > .tf-test-agent/pr.diff
-          {
-            echo "mode: pr"
-            echo "targets:"
-            jq -r '.[] | "- " + .' <<< "$TARGETS"
-            echo "diff: .tf-test-agent/pr.diff"
-            echo
-            echo "Work through every target and return the report."
-          } > .tf-test-agent/prompt.txt
-          cat .tf-test-agent/prompt.txt
+          git diff "$FROM_SHA...$HEAD_SHA" -- modules stacks > .tf-test-agent/pr.diff
+          mapfile -t targets < <(jq -r '.[]' <<< "$TARGETS")
+          "$PLUGIN/ci/prompt.sh" pr .tf-test-agent/pr.diff "${targets[@]}" > .tf-test-agent/prompt.txt
+          wc -c .tf-test-agent/prompt.txt
 
       - name: Run the agent
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          MODEL: ${{ vars.TF_TEST_AGENT_MODEL || 'sonnet' }}
-          MAX_USD: ${{ vars.TF_TEST_AGENT_MAX_USD || '5' }}
+          MODEL: ${{ vars.TF_TEST_AGENT_MODEL || 'haiku' }}
+          MAX_USD: ${{ vars.TF_TEST_AGENT_MAX_USD || '1' }}
           TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/tf-plugins
         run: |
           [ -n "$ANTHROPIC_API_KEY" ] || unset ANTHROPIC_API_KEY
@@ -121,7 +128,7 @@ jobs:
             --settings "$PLUGIN/ci/claude-settings.json" \
             --setting-sources user \
             --model "$MODEL" \
-            --max-turns 80 \
+            --max-turns 40 \
             --max-budget-usd "$MAX_USD" \
             --json-schema "$(cat "$PLUGIN/schemas/report.schema.json")" \
             --output-format stream-json --verbose \

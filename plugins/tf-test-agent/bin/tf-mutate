@@ -6,9 +6,10 @@ alternative. The mutation runs on a temporary copy of the repository; the
 working tree is never changed. A test is proven when the mutation makes it fail.
 
   tf-mutate <target> <file> <find> <replace> [--expect RUN]
-  tf-mutate --report report.json      # every mutation listed in an agent report
+  tf-mutate --batch '[{"target": ..., "file": ..., "find": ..., "replace": ..., "expect": ...}]'
+  tf-mutate --report report.json      # every mutation in an agent report, as JSON
 
-The result is printed as JSON. Status per mutation:
+Status per mutation:
   killed    the expected run (or any run, without --expect) failed
   survived  all runs still pass, so the test does not catch this change
   invalid   the mutation is not usable: not found exactly once, or the mutated
@@ -122,9 +123,24 @@ def from_report(root, report_path):
     return results
 
 
+def from_batch(root, batch):
+    return [prove(root, m["target"], m["file"], m["find"], m["replace"], m.get("expect")) for m in json.loads(batch)]
+
+
+def short(result):
+    """One line per mutation, so the agent's context stays small."""
+    line = f'{result["status"]}: {result.get("target")} run {result.get("expect") or "any"}'
+    if result.get("failed_runs") and result["status"] != "killed":
+        line += f' (failed instead: {", ".join(result["failed_runs"])})'
+    if result.get("detail"):
+        line += f' ({result["detail"].strip()[:300]})'
+    return line
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--report", help="agent report with mutations to prove")
+    parser.add_argument("--report", help="agent report with mutations to prove; prints JSON")
+    parser.add_argument("--batch", help='JSON list of {"target", "file", "find", "replace", "expect"}')
     parser.add_argument("--expect", help="run that must fail under the mutation")
     parser.add_argument("args", nargs="*", metavar="target file find replace")
     opts = parser.parse_args()
@@ -133,11 +149,15 @@ def main():
     if opts.report:
         print(json.dumps(from_report(root, opts.report), indent=2))
         return 0
-    if len(opts.args) != 4:
-        parser.error("expected: target file find replace")
-    result = prove(root, *opts.args, expect=opts.expect)
-    print(json.dumps(result, indent=2))
-    return {"killed": 0, "survived": 1}.get(result["status"], 2)
+    if opts.batch:
+        results = from_batch(root, opts.batch)
+    elif len(opts.args) == 4:
+        results = [prove(root, *opts.args, expect=opts.expect)]
+    else:
+        parser.error("expected: target file find replace, or --batch")
+    for result in results:
+        print(short(result))
+    return 0 if all(r["status"] == "killed" for r in results) else 1
 
 
 if __name__ == "__main__":

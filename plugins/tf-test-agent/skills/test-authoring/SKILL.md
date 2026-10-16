@@ -54,12 +54,16 @@ See [reference.md](reference.md) for a complete example.
 
 ## Run and prove
 
-1. Run `tf-run-tests <target>`. It checks `terraform fmt`, validates and runs all tests of the target.
-2. For every run you added or changed, prove it with at least one mutation: a small, realistic wrong change to a `.tf` file that the run must catch.
+1. Run `tf-run-tests <target>`. It checks `terraform fmt` of the tests, validates and runs all tests of the target. On success it prints one summary line; on failure the full output.
+2. For every run you added or changed, prove it with at least one mutation: a small, realistic wrong change to a `.tf` file that the run must catch. Check all of them in one call:
 
    ```sh
-   tf-mutate <target> <file> '<exact text>' '<wrong text>' --expect <run name>
+   tf-mutate --batch '[
+     {"target": "modules/x", "file": "modules/x/main.tf", "find": "is_manual_connection           = false", "replace": "is_manual_connection           = true", "expect": "connects_to_the_target_automatically"}
+   ]'
    ```
+
+   `find` is the exact text of one line or part of it, including its spacing. The result is one line per mutation:
 
    - `killed`: the run catches the regression. Keep the mutation for the report.
    - `survived`: the run does not catch it. Strengthen the run or choose the regression the run is really about.
