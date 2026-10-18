@@ -58,6 +58,11 @@ run "grants_secrets_user_role_to_each_reader_principal" {
     condition     = azurerm_role_assignment.secret_reader["adf"].principal_id == var.secret_readers["adf"]
     error_message = "Each secret reader must be granted access as its own principal, keyed by its short name."
   }
+
+  assert {
+    condition     = data.azurerm_role_definition.secrets_user.name == "Key Vault Secrets User"
+    error_message = "Readers must get the Secrets User role, not a broader one."
+  }
 }
 
 run "keeps_deleted_secrets_recoverable_for_30_days" {
