@@ -1,5 +1,5 @@
 variable "name" {
-  description = "Key vault name, 3 to 24 characters."
+  description = "Key vault name, 3 to 24 characters, globally unique."
   type        = string
 }
 
