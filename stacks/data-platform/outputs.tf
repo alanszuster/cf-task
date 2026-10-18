@@ -12,3 +12,8 @@ output "key_vault_uri" {
   description = "URI of the key vault."
   value       = module.key_vault.vault_uri
 }
+
+output "private_dns_zone_ids" {
+  description = "Private DNS zone IDs by zone name."
+  value       = module.private_dns.zone_ids
+}
