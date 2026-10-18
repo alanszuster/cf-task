@@ -32,3 +32,39 @@ run "creates_one_role_assignment_per_reader" {
     error_message = "Expected one role assignment for each secret reader."
   }
 }
+
+run "denies_network_by_default_and_allows_only_listed_subnets" {
+  command = plan
+
+  variables {
+    allowed_subnet_ids = ["/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-test/providers/Microsoft.Network/virtualNetworks/vnet-test/subnets/apps"]
+  }
+
+  assert {
+    condition     = azurerm_key_vault.this.network_acls[0].default_action == "Deny"
+    error_message = "The vault firewall must deny traffic by default."
+  }
+
+  assert {
+    condition     = tolist(azurerm_key_vault.this.network_acls[0].virtual_network_subnet_ids) == tolist(var.allowed_subnet_ids)
+    error_message = "Only the subnets passed in allowed_subnet_ids may reach the vault."
+  }
+}
+
+run "grants_secrets_user_role_to_each_reader_principal" {
+  command = plan
+
+  assert {
+    condition     = azurerm_role_assignment.secret_reader["adf"].principal_id == var.secret_readers["adf"]
+    error_message = "Each secret reader must be granted access as its own principal, keyed by its short name."
+  }
+}
+
+run "keeps_deleted_secrets_recoverable_for_30_days" {
+  command = plan
+
+  assert {
+    condition     = azurerm_key_vault.this.soft_delete_retention_days == 30
+    error_message = "Soft delete retention must be 30 days, the recovery window the platform relies on."
+  }
+}

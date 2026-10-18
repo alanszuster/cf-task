@@ -148,7 +148,7 @@ def main():
     if result:
         footer.append(f'turns: {result.get("num_turns", "?")}')
         if result.get("total_cost_usd") is not None:
-            footer.append(f'cost: ${result["total_cost_usd"]:.2f}')
+            footer.append(f'cost: ${result["total_cost_usd"]:.3f}')
     if o.run_url:
         footer.append(f"[run]({o.run_url})")
     lines += ["<sub>" + " · ".join(footer) + "</sub>"]

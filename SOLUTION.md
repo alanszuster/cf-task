@@ -1,0 +1,136 @@
+# Solution
+
+A Claude Code agent that writes `terraform test` files for changed Terraform code in a pull request. It runs the tests, proves each test can catch a bug, and posts the results and findings in the pull request. It never changes infrastructure code.
+
+## How it works
+
+```
+pull request
+   │
+   ├─ analyze   which modules and stacks changed (bash, no LLM)
+   ├─ agent     Claude Code writes or updates tests, returns a JSON report
+   ├─ verify    CI checks the agent's work again, without trusting the report (no LLM, no secrets)
+   └─ publish   commits verified tests to the PR branch, posts a comment and a check run
+```
+
+The agent works only in the PR that started the run. It does not open other PRs.
+
+## Main decisions
+
+| Decision | Why | What I gave up |
+|---|---|---|
+| Claude Code CLI in headless mode, packed as a plugin | Full control of tools and permissions. One plugin can be used in many repositories. | `claude-code-action` would be less code, but it needs GitHub write access in the agent job. |
+| The agent writes tests, CI verifies them | An LLM can say "tests pass" when they do not. The `verify` job runs everything again by itself. | More CI time. |
+| Mutation proof | A passing test can still check nothing. For each new test the agent gives a small realistic bug (a mutation). CI applies it to a copy of the code, and the test must fail. | Agent picks the mutations, so a weak test with a weak mutation is still possible. |
+| Agent, skills and permissions come from the base branch | A PR cannot change the rules it is checked by. | A change to the agent itself takes effect only after merge. |
+| Tests describe intended behavior | If code does something wrong (for example `ftps_state = "AllAllowed"`), the agent does not write a test that confirms it. It reports a finding. | Some code stays untested until a person decides. |
+| Haiku as default model | Measured on one module: with a good skill, Haiku tests were as good as Sonnet tests, for about 10% of the cost. | Less reasoning for complex changes. Sonnet can be set with a repo variable. |
+| Code is put into the prompt | The agent does not spend turns finding files. Cheaper than an MCP server, whose tool definitions are sent every turn. | Big targets make a big prompt. |
+| Tests are committed with `GITHUB_TOKEN` | No extra app or token to manage. | Commits made with `GITHUB_TOKEN` do not start other workflows. The run posts its own check on the new commit. |
+
+I also tried `--bare` mode for more isolation. It removes the `Skill` and `Write` tools, so I did not use it. The workflow deletes `CLAUDE.md` and `.claude/` from the PR checkout instead.
+
+## Security
+
+- Each job has its own minimal permissions. Only `publish` can write, and it runs no Terraform and no code from the PR.
+- The agent can only edit files in `*/tests/` and run two commands: `tf-run-tests` and `tf-mutate`. Everything else is denied (`dontAsk` mode). Tested: it cannot read `.env`, `/proc/self/environ` or files outside the repo.
+- Terraform runs with a clean environment, so the API key never reaches it.
+- Tests must mock providers and override `data "external"`, so no test calls Azure or runs repository scripts.
+- `verify` rejects patches that touch other files or remove existing runs or asserts.
+- Text from the model is escaped before it goes to the PR comment (no HTML, mentions or links).
+- Actions are pinned to commit SHAs. Claude Code and Terraform versions are pinned.
+- PRs from forks and drafts are skipped. Forks get no secrets anyway.
+
+## How to run
+
+Prerequisites:
+
+- GitHub repository with Actions enabled.
+- Repository secret `CLAUDE_PLATFORM_API_KEY` with an Anthropic API key.
+- The plugin must be on the base branch (`main`) before the PR is opened.
+
+Optional repository variables: `TF_TEST_AGENT_MODEL` (default `haiku`) and `TF_TEST_AGENT_MAX_USD` (default `1`).
+
+Then open a PR that changes `modules/**` or `stacks/**`. The workflow is `.github/workflows/tf-test-agent.yml`.
+
+Run the agent locally (backfill mode, no PR needed):
+
+```sh
+export ANTHROPIC_API_KEY=...
+plugins/tf-test-agent/ci/run-agent.sh backfill - /tmp/agent-run modules/data-factory
+```
+
+The workflow uses the same script, so a local run behaves like a CI run. The report is in `/tmp/agent-run/report.json`.
+
+## Where things are
+
+| Path | What |
+|---|---|
+| `plugins/tf-test-agent/agents/test-engineer.md` | The custom agent: role, process and hard rules. |
+| `plugins/tf-test-agent/skills/change-analysis/` | Decide `create`, `update` or `skip` for each target. |
+| `plugins/tf-test-agent/skills/test-authoring/` | How to write tests, what not to test, how to prove them. Has a reference example. |
+| `plugins/tf-test-agent/skills/review-findings/` | How to report problems to reviewers: severity, evidence, no code changes. |
+| `plugins/tf-test-agent/bin/` | `tf-run-tests` and `tf-mutate`, the only commands the agent can run. |
+| `plugins/tf-test-agent/ci/` | Agent permissions, prompt builder, `verify.py`, `render.py`. |
+| `plugins/tf-test-agent/schemas/report.schema.json` | Contract for the agent's report. |
+| `.claude-plugin/marketplace.json` | Lets other repositories install the plugin. |
+
+The agent loads each skill with the `Skill` tool when it needs it. The skills it used are read from the run log and shown in the PR comment.
+
+## Example run
+
+[PR #1](https://github.com/alanszuster/cf-task/pull/1) adds a validation for `retention_in_days` (30 to 730) in `log-analytics-workspace`.
+
+- **Targets:** the module and `stacks/data-platform`, because the stack calls the module.
+- **Decisions:** module `update`, because the new validation had no tests. Stack `skip`, because it does not pass retention and the default still passes.
+- **Skills used:** `change-analysis`, `test-authoring`, `review-findings`.
+- **Tests added:** 29 days rejected, 731 days rejected, 730 days accepted. The lower bound was already covered by an existing run.
+- **Verification by CI:** 6 of 6 tests pass, 3 of 3 mutations killed.
+- **Finding (info):** every environment, also prod, gets the 30 day minimum. It is a business decision, so the agent only asks.
+- **Cost:** $0.005, 11 turns.
+
+## What the tests can and cannot show
+
+They can show:
+
+- What Terraform plans for given inputs: settings, names, counts, conditional blocks, outputs.
+- That validations reject bad input.
+- That each new test fails for at least one realistic bug.
+
+They cannot show:
+
+- What Azure accepts. Tests use a mocked provider, so a wrong SKU or region passes.
+- Real values known only after apply, like IDs or IP addresses (the mock makes them up).
+- Problems between resources at runtime, like network access or DNS. The agent reports these as findings when it sees them.
+- That the intended behavior is the right one. The agent guesses intent from descriptions and conventions.
+
+## Assumptions
+
+- Contributors with write access are trusted like in normal CI. Running `terraform test` on PR code runs that code.
+- Variable descriptions and the README describe the intended behavior.
+- Tests run only with mocks. No cloud credentials, no cloud resources.
+- Lock files are committed for every module with tests.
+
+## Limitations
+
+- The model is not deterministic. Two runs on the same change can give different tests. The checks in `verify` are deterministic.
+- `verify` scope and weakening checks use simple text rules, not an HCL parser.
+- Branch protection with other required checks will block the bot commit, because `GITHUB_TOKEN` commits do not start other workflows.
+- The agent sees only the targets and the diff. A wide change across many modules makes a big prompt.
+- Stack tests cannot load `envs/*.tfvars`, so they copy the few values they need.
+
+## With many more modules, teams or repositories
+
+- Install the plugin from the marketplace in each repository instead of copying it. Version it and roll out updates like any dependency.
+- Move the workflow to a reusable workflow (`workflow_call`) in one central repository.
+- Run one agent per target in parallel instead of one agent for all targets.
+- Teams can add their own skills, for example naming rules, next to the shared ones.
+- Track cost and results per repository to see where the agent helps and where it is noise.
+
+## For a production version
+
+- Use Claude through Microsoft Foundry with OIDC (`azure/login`) instead of an API key. No long-lived secret, billing and data stay in the company tenant.
+- Push with a GitHub App token, so other checks run on the bot commit, and add a loop guard.
+- Add `terraform plan` against a real backend with OIDC, so the agent can also read the plan, not only the code.
+- Parse HCL properly in `verify` instead of using text rules.
+- Add a small set of example PRs as an evaluation suite, and run it when the agent or skills change.

@@ -102,32 +102,18 @@ jobs:
             \( -name CLAUDE.md -o -name CLAUDE.local.md -o -name AGENTS.md -o -name .claude \) -print \
             -exec rm -rf {} +
           git diff "$FROM_SHA...$HEAD_SHA" -- modules stacks > .tf-test-agent/pr.diff
-          mapfile -t targets < <(jq -r '.[]' <<< "$TARGETS")
-          "$PLUGIN/ci/prompt.sh" pr .tf-test-agent/pr.diff "${targets[@]}" > .tf-test-agent/prompt.txt
-          wc -c .tf-test-agent/prompt.txt
 
       - name: Run the agent
         env:
           ANTHROPIC_API_KEY: ${{ secrets.CLAUDE_PLATFORM_API_KEY }}
-          MODEL: ${{ vars.TF_TEST_AGENT_MODEL || 'haiku' }}
-          MAX_USD: ${{ vars.TF_TEST_AGENT_MAX_USD || '1' }}
+          TF_TEST_AGENT_MODEL: ${{ vars.TF_TEST_AGENT_MODEL || 'haiku' }}
+          TF_TEST_AGENT_MAX_USD: ${{ vars.TF_TEST_AGENT_MAX_USD || '1' }}
           TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/tf-plugins
         run: |
           mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          mapfile -t targets < <(jq -r '.[]' <<< "$TARGETS")
           status=0
-          claude -p "$(cat .tf-test-agent/prompt.txt)" \
-            --plugin-dir "$PLUGIN" \
-            --agent tf-test-agent:test-engineer \
-            --settings "$PLUGIN/ci/claude-settings.json" \
-            --setting-sources user \
-            --model "$MODEL" \
-            --max-turns 40 \
-            --max-budget-usd "$MAX_USD" \
-            --json-schema "$(cat "$PLUGIN/schemas/report.schema.json")" \
-            --output-format stream-json --verbose \
-            > .tf-test-agent/transcript.jsonl || status=$?
-          jq -c 'select(.type == "result") | .structured_output // empty' .tf-test-agent/transcript.jsonl > .tf-test-agent/report.json
-          jq -r 'select(.type == "result") | "result: \(.subtype), turns: \(.num_turns), cost: \(.total_cost_usd)"' .tf-test-agent/transcript.jsonl
+          "$PLUGIN/ci/run-agent.sh" pr .tf-test-agent/pr.diff .tf-test-agent "${targets[@]}" || status=$?
           git add --intent-to-add --all -- modules stacks
           git diff --binary -- modules stacks > .tf-test-agent/agent.patch
           git diff --stat -- modules stacks
