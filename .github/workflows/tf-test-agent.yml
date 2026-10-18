@@ -228,12 +228,12 @@ jobs:
           path: ${{ env.TRUSTED }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        continue-on-error: true
+        if: needs.agent.result == 'success'
         with:
           name: agent
           path: .tf-test-agent/agent
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        continue-on-error: true
+        if: needs.verify.result == 'success'
         with:
           name: verify
           path: .tf-test-agent
