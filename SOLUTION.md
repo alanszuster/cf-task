@@ -41,6 +41,33 @@ I also tried `--bare` mode for more isolation. It removes the `Skill` and `Write
 - Actions are pinned to commit SHAs. Claude Code and Terraform versions are pinned.
 - PRs from forks and drafts are skipped. Forks get no secrets anyway.
 
+## How I used an LLM to build this
+
+I built this with Claude Code. I made the design decisions and reviewed every change. I did not trust what the model said worked; I checked it:
+
+- **Every script was run before commit**, and `actionlint` and `shellcheck` run on the workflow and shell scripts.
+- **Smoke tests in CI-like conditions** (empty Claude config, real API key) found four problems that would break the first PR run: `--bare` removes the tools the agent needs, the JSON schema version was not supported, the API key was not read on a fresh runner, and the agent's tool list blocked the structured report.
+- **Permission tests**: I asked the agent to read `.env`, `/proc/self/environ` and files outside the repo, and to chain shell commands. All were denied.
+- **Gate tests**: I gave `verify` patches that change `.tf` files, remove runs and use weak mutations. It rejected all of them.
+- **Measured, not guessed**: I compared Haiku and Sonnet on the same module. A better skill helped more than a bigger model.
+- **Human review of generated tests**: a test name in `key-vault` claimed to check the role, but only checked the principal. Mutations did not catch this; review did. I added the missing assert.
+- **The gate caught a shortcut**: my first reference example in the skill was the `private-endpoint` module from this repo. When the agent worked on that module, it copied the example and skipped the mutation step. All tests passed, but `verify` marked every run as unproven. I replaced the example with a made-up module, checked that it really works, and added a hard rule to the agent. The next run proved all its tests.
+
+## Missing tests added
+
+The same agent added tests to the existing modules in backfill mode (`run-agent.sh backfill`). I reviewed every result before commit.
+
+| Target | Decision | Runs added | Findings | Cost |
+|---|---|---|---|---|
+| `log-analytics-workspace` | create | 3 | 2 | $0.005 |
+| `key-vault` | update | 3 (+1 assert from review) | 3 | $0.009 |
+| `storage-account` | update | 8 | 2 | $0.013 |
+| `data-factory` | create | 5 | 3 | $0.014 |
+| `databricks-workspace` | create | 7 | 2 | $0.010 |
+| `private-endpoint` | create | 5 | 1 | $0.013 |
+
+`network`, `function-app` and the stack get their tests in the example PR, through the workflow.
+
 ## How to run
 
 Prerequisites:

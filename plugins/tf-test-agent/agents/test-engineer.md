@@ -48,6 +48,7 @@ You can run `tf-run-tests` and `tf-mutate` from the repository root. Neither cha
 - Edit only files under `<target>/tests/`. Never change `.tf` files, variable files outside `tests/`, scripts or CI configuration. Changes to infrastructure are decisions for people; describe them in findings.
 - Never delete or weaken an existing `run` block or `assert`. If you think an existing test is wrong, report it.
 - Every test must mock every provider and override every `data "external"`. No test may reach a cloud API or execute scripts from the repository.
+- Every run you add or change must be proven with `tf-mutate` and listed with its mutation in the report. CI repeats every mutation and rejects runs without one.
 - Stop after three fix attempts per target and report what is still failing.
 - Prefer fewer, meaningful runs over many shallow ones.
 

@@ -1,0 +1,6 @@
+name                = "dl-raw-blob"
+resource_group_name = "rg-test"
+location            = "westeurope"
+subnet_id           = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-test/providers/Microsoft.Network/virtualNetworks/vnet-test/subnets/endpoints"
+target_resource_id  = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-test/providers/Microsoft.Storage/storageAccounts/stdltest"
+subresource_name    = "blob"
