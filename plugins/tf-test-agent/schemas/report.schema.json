@@ -52,7 +52,7 @@
               "failed": { "type": "integer", "minimum": 0 }
             }
           },
-          "not_covered": { "type": "array", "items": { "type": "string", "maxLength": 300 } }
+          "not_covered": { "type": "array", "maxItems": 5, "items": { "type": "string", "maxLength": 300 } }
         }
       }
     },

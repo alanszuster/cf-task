@@ -32,7 +32,9 @@ Do not report formatting, naming taste or anything you cannot point to in the co
 - `evidence`: the code that shows the problem, quoted.
 - Why it matters, in one or two sentences.
 - `recommendation`: what a person could change. You may show a short snippet, but you never apply it.
-- `in_diff`: whether the pull request introduced or touched it. Findings outside the diff are still useful, but keep them to the targets you analyzed.
+- `in_diff`: whether the pull request introduced or touched it.
+
+For code the pull request did not touch, report only `medium` and `high` findings, and only for the targets you analyzed. Every push runs the agent again, so `low` and `info` notes on old code would repeat in every run and hide what is new.
 
 ## Be honest about certainty
 
