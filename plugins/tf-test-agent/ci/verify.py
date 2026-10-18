@@ -69,7 +69,6 @@ def check_no_weaken(paths):
 
 
 def uses_external(target):
-    """True when the target, or a module it calls, has a data "external" source."""
     dirs = [Path(target)]
     for tf in Path(target).glob("*.tf"):
         dirs += [Path(target, m) for m in re.findall(r'source\s*=\s*"(\.\./[^"]+)"', tf.read_text())]
@@ -77,8 +76,6 @@ def uses_external(target):
 
 
 def check_mocks(targets):
-    # A cloud provider that is not mocked fails without credentials anyway.
-    # An unmocked data "external" silently runs a script from the repository.
     problems = []
     for target in targets:
         for f in sorted(Path(target, "tests").glob("*.tftest.hcl")):

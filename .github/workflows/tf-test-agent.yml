@@ -16,8 +16,7 @@ concurrency:
 env:
   TERRAFORM_VERSION: 1.12.2
   CLAUDE_CODE_VERSION: 2.1.301
-  # The agent, its skills, permissions and CI scripts always come from the base
-  # branch. A pull request cannot change the rules it is checked by.
+  # The agent, its permissions and CI scripts come from the base branch, never from the PR.
   TRUSTED: .tf-test-agent/trusted
   PLUGIN: .tf-test-agent/trusted/plugins/tf-test-agent
   BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -25,7 +24,6 @@ env:
 
 jobs:
   analyze:
-    # Pull requests from forks get no secrets; drafts are not ready for review.
     if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -51,18 +49,15 @@ jobs:
           ACTION: ${{ github.event.action }}
           BEFORE: ${{ github.event.before }}
         run: |
-          # On a new push only the new commits need analysis: tests for the earlier
-          # ones are already on the branch. After a force push, analyze everything.
+          # On a new push analyze only the new commits; after a force push, everything.
           from="$BASE_SHA"
           if [ "$ACTION" = synchronize ] \
              && git merge-base --is-ancestor "$BEFORE" "$HEAD_SHA" 2>/dev/null; then
             from="$BEFORE"
           fi
           echo "from=$from" >> "$GITHUB_OUTPUT"
-          # Changes only to tests or documentation do not need the agent.
           dirs="$(git diff --name-only "$from...$HEAD_SHA" -- modules stacks \
             | grep -Ev '/tests/|\.md$' | cut -d/ -f1-2 | sort -u || true)"
-          # A stack is a target too when it calls a changed module.
           for module in $(grep '^modules/' <<< "$dirs" || true); do
             dirs+=$'\n'"$(grep -l "\"../../$module\"" stacks/*/*.tf | xargs -r dirname)"
           done
@@ -101,10 +96,6 @@ jobs:
 
       - name: Prepare the agent's input
         run: |
-          # Agent instructions from the pull request would be loaded as context. Remove them.
-          find . -path ./.tf-test-agent -prune -o \
-            \( -name CLAUDE.md -o -name CLAUDE.local.md -o -name AGENTS.md -o -name .claude \) -print \
-            -exec rm -rf {} +
           git diff "$FROM_SHA...$HEAD_SHA" -- modules stacks > .tf-test-agent/pr.diff
           mapfile -t targets < <(jq -r '.[]' <<< "$TARGETS")
           "$PLUGIN/ci/prompt.sh" pr .tf-test-agent/pr.diff "${targets[@]}" > .tf-test-agent/prompt.txt
@@ -112,21 +103,19 @@ jobs:
 
       - name: Run the agent
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.CLAUDE_PLATFORM_API_KEY }}
           MODEL: ${{ vars.TF_TEST_AGENT_MODEL || 'haiku' }}
           MAX_USD: ${{ vars.TF_TEST_AGENT_MAX_USD || '1' }}
           TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/tf-plugins
         run: |
-          [ -n "$ANTHROPIC_API_KEY" ] || unset ANTHROPIC_API_KEY
-          [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || unset CLAUDE_CODE_OAUTH_TOKEN
           mkdir -p "$TF_PLUGIN_CACHE_DIR"
           status=0
+          # --bare: no CLAUDE.md, hooks or settings from the PR checkout.
           claude -p "$(cat .tf-test-agent/prompt.txt)" \
+            --bare \
             --plugin-dir "$PLUGIN" \
             --agent tf-test-agent:test-engineer \
             --settings "$PLUGIN/ci/claude-settings.json" \
-            --setting-sources user \
             --model "$MODEL" \
             --max-turns 40 \
             --max-budget-usd "$MAX_USD" \
@@ -152,8 +141,6 @@ jobs:
           retention-days: 14
 
   verify:
-    # Runs the pull request's code and the agent's tests, so it has no secrets
-    # and no write access. It trusts nothing the agent says about its results.
     needs: [analyze, agent]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -210,8 +197,6 @@ jobs:
           retention-days: 14
 
   publish:
-    # The only job with write access. It runs no Terraform and no code from the
-    # pull request: it applies a verified patch and posts results.
     needs: [analyze, agent, verify]
     if: always() && needs.analyze.result == 'success' && needs.analyze.outputs.targets != '[]'
     runs-on: ubuntu-24.04
@@ -252,7 +237,6 @@ jobs:
             echo "::warning::The branch moved during the run. Nothing committed; the next run covers the new commits."
           elif [ -s .tf-test-agent/agent/agent.patch ]; then
             git apply .tf-test-agent/agent/agent.patch
-            # Same scope check as in verify, here without Terraform: defense in depth.
             python3 "$PLUGIN/ci/verify.py" --scope-only --targets "$TARGETS" \
               --report .tf-test-agent/agent/report.json --out .tf-test-agent/scope.json
             echo "apply=true" >> "$GITHUB_OUTPUT"

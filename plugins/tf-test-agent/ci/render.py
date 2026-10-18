@@ -21,7 +21,6 @@ ICON = {"high": "🔴", "medium": "🟠", "low": "🟡", "info": "🔵"}
 
 
 def text(value):
-    """Escape model text for one line of markdown."""
     value = str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     value = re.sub(r"@(?=\w)", "@\u200b", value)            # no mentions
     value = re.sub(r"\]\(", "]\u200b(", value)              # no markdown links
@@ -89,7 +88,6 @@ def main():
 
     lines = ["## 🧪 Terraform test agent", "", headline, ""]
 
-    # Targets
     tests = verify.get("tests", {})
     mutations = verify.get("mutations", [])
     lines += ["| Target | Decision | Tests (re-run by CI) | Mutation proof |", "|---|---|---|---|"]
@@ -110,7 +108,6 @@ def main():
         lines.append(f"| `{target}` | {decision} | {test_cell} | {proof} |")
     lines.append("")
 
-    # Failed checks
     failed = {k: v for k, v in verify.get("checks", {}).items() if v}
     if failed:
         lines += ["### Verification problems", ""]
@@ -121,7 +118,6 @@ def main():
             if not test["ok"]:
                 lines += [f"<details><summary>Test output for <code>{target}</code></summary>", "", code(test["log_tail"]), "", "</details>", ""]
 
-    # What the runs prove
     runs = [(t["path"], r) for t in report.get("targets", []) for r in t.get("runs", [])]
     if runs:
         lines += ["<details><summary>What the new and changed runs prove</summary>", "",
@@ -131,7 +127,6 @@ def main():
             lines.append(f'| `{target}` | `{text(run["name"])}` | {text(run["proves"])} | {", ".join(status) or "–"} |')
         lines += ["", "</details>", ""]
 
-    # Findings
     if findings:
         lines += [f"### Findings for reviewers ({len(findings)})", "",
                   "The agent does not change infrastructure code. These are for you to decide.", ""]
@@ -142,7 +137,6 @@ def main():
                       f"{where}", "", code(f["evidence"]), "", f'**Why it matters:** {text(f["why"])}', "",
                       f'**Suggestion:** {text(f["recommendation"])}', "", "</details>", ""]
 
-    # Limits
     limits = [n for t in report.get("targets", []) for n in t.get("not_covered", [])]
     if limits:
         lines += ["<details><summary>What these tests cannot show</summary>", ""]
@@ -176,8 +170,7 @@ def main():
     }
     Path(o.check).write_text(json.dumps(check, indent=2))
 
-    # Step outputs for the check run action. json.dumps escapes newlines, so
-    # model text cannot add lines of its own to the output file.
+    # json.dumps escapes newlines, so model text cannot inject extra outputs.
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as out:
             for key, value in check.items():

@@ -77,7 +77,6 @@ def prove(root, target, file, find, replace, expect=None):
 
         workdir = copy / target
         if (root / target / ".terraform").is_dir():
-            # Reuse providers and module links of the original instead of a new init.
             (workdir / ".terraform").symlink_to(root / target / ".terraform")
         else:
             init = terraform(["init", "-backend=false", "-no-color"], workdir, str(home))
@@ -128,7 +127,6 @@ def from_batch(root, batch):
 
 
 def short(result):
-    """One line per mutation, so the agent's context stays small."""
     line = f'{result["status"]}: {result.get("target")} run {result.get("expect") or "any"}'
     if result.get("failed_runs") and result["status"] != "killed":
         line += f' (failed instead: {", ".join(result["failed_runs"])})'

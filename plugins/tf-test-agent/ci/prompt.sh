@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# Builds the agent's task message: mode, targets, the diff and the current code
-# and tests of every target. Giving the agent the files up front saves the turns
-# it would spend finding and reading them, which is most of the cost of a run.
-#
+# Builds the agent's task message with the diff and the code and tests of every target.
 #   prompt.sh pr <diff-file> <target>...
 #   prompt.sh backfill - <target>...
 set -euo pipefail
@@ -11,7 +8,6 @@ mode="${1:?usage: prompt.sh <pr|backfill> <diff-file|-> <target>...}"
 diff_file="${2:?missing diff file}"
 shift 2
 
-# Prints a markdown heading followed by a fenced code block.
 section() {
   local heading="$1" lang="$2" body="$3"
   # The backticks are a markdown fence, not command substitution.

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Checks formatting, validates and runs `terraform test` for one module or stack.
-# It is the only command the agent may run. Terraform runs with a clean
-# environment, so API keys and tokens of the caller are not passed to it.
+# Runs fmt, validate and terraform test for one module or stack, with a clean
+# environment so the caller's API keys never reach Terraform.
 set -euo pipefail
 
 target="${1:?usage: tf-run-tests <modules/name | stacks/name>}"
@@ -31,12 +30,9 @@ tf() {
     timeout 600 terraform -chdir="$dir" "$@"
 }
 
-# Use the committed lock file as is, so a test run never changes provider versions.
 lockfile_mode=()
 [[ -f "$dir/.terraform.lock.hcl" ]] && lockfile_mode=(-lockfile=readonly)
 
-# Output is short on success and complete on failure: everything printed here
-# ends up in the agent's context.
 step() {
   local name="$1"
   shift
@@ -48,8 +44,6 @@ step() {
   fi
 }
 
-# Only the test files are checked: formatting of the code under test belongs to
-# the author of the change, not to the agent.
 if [[ -d "$dir/tests" ]]; then
   step fmt tf fmt -check -diff -recursive tests
 fi
