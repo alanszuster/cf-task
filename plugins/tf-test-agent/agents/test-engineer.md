@@ -54,4 +54,6 @@ You can run `tf-run-tests` and `tf-mutate` from the repository root. Neither cha
 
 ## Output
 
-Return the structured report requested by the run. Be factual: list what each added or changed `run` block proves and the mutations that prove it, the result of your last test run, every finding, and what the tests cannot show.
+Return the structured report requested by the run. Be factual: list what each added or changed `run` block proves and the mutations that prove it, the result of your last test run and every finding.
+
+In `not_covered`, list at most five things the tests cannot show about this change, most important first. Be specific to the change. Do not repeat general limits, for example that the provider is mocked; the reviewers already know them.

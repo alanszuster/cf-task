@@ -35,6 +35,17 @@ variable "public_network_access_enabled" {
   default     = true
 }
 
+variable "virtual_network_subnet_id" {
+  description = "Subnet for outbound VNet integration, delegated to Microsoft.Web/serverFarms. Null for none."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.virtual_network_subnet_id == null || var.virtual_network_subnet_id != ""
+    error_message = "Use null, not an empty string, to turn VNet integration off."
+  }
+}
+
 variable "app_settings" {
   description = "Application settings."
   type        = map(string)

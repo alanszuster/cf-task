@@ -1,0 +1,5 @@
+name                 = "func-tp-test"
+resource_group_name  = "rg-tp-test"
+location             = "westeurope"
+storage_account_name = "sttptest"
+storage_account_id   = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-tp-test/providers/Microsoft.Storage/storageAccounts/sttptest"

@@ -16,10 +16,9 @@ concurrency:
 env:
   TERRAFORM_VERSION: 1.12.2
   CLAUDE_CODE_VERSION: 2.1.301
-  # The agent, its permissions and CI scripts come from the base branch, never from the PR.
+  # The agent, its permissions and CI scripts come from the current base branch, never from the PR.
   TRUSTED: .tf-test-agent/trusted
   PLUGIN: .tf-test-agent/trusted/plugins/tf-test-agent
-  BASE_SHA: ${{ github.event.pull_request.base.sha }}
   HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
 jobs:
@@ -31,7 +30,7 @@ jobs:
       contents: read
     outputs:
       targets: ${{ steps.targets.outputs.targets }}
-      from: ${{ steps.targets.outputs.from }}
+      trusted: ${{ steps.trusted.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -40,26 +39,32 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.BASE_SHA }}
+          ref: ${{ github.event.pull_request.base.ref }}
           path: ${{ env.TRUSTED }}
           persist-credentials: false
+      - id: trusted
+        name: Pin the trusted base for all jobs
+        # base.sha in the event is the base when the PR was opened; use the current one.
+        run: echo "sha=$(git -C "$TRUSTED" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - id: targets
         name: Find changed modules and stacks
         env:
           ACTION: ${{ github.event.action }}
           BEFORE: ${{ github.event.before }}
+          BASE: ${{ steps.trusted.outputs.sha }}
         run: |
-          # On a new push analyze only the new commits; after a force push, everything.
-          from="$BASE_SHA"
+          files="$(git diff --name-only "$BASE...$HEAD_SHA" -- modules stacks)"
+          # On a new push keep only files this push changed. Files merged in from the
+          # base branch are not part of the PR diff, so they drop out. After a force
+          # push, analyze the whole PR.
           if [ "$ACTION" = synchronize ] \
              && git merge-base --is-ancestor "$BEFORE" "$HEAD_SHA" 2>/dev/null; then
-            from="$BEFORE"
+            files="$(comm -12 <(sort <<< "$files") \
+              <(git diff --name-only "$BEFORE" "$HEAD_SHA" -- modules stacks | sort))"
           fi
-          echo "from=$from" >> "$GITHUB_OUTPUT"
-          dirs="$(git diff --name-only "$from...$HEAD_SHA" -- modules stacks \
-            | grep -Ev '/tests/|\.md$' | cut -d/ -f1-2 | sort -u || true)"
+          dirs="$(grep -Ev '/tests/|\.md$' <<< "$files" | cut -d/ -f1-2 | sort -u || true)"
           for module in $(grep '^modules/' <<< "$dirs" || true); do
-            dirs+=$'\n'"$(grep -l "\"../../$module\"" stacks/*/*.tf | xargs -r dirname)"
+            dirs+=$'\n'"$(grep -l "\"../../$module\"" stacks/*/*.tf | xargs -r dirname || true)"
           done
           targets="$(sort -u <<< "$dirs" | while read -r d; do if [ -d "$d" ]; then echo "$d"; fi; done | jq -R -s -c 'split("\n") | map(select(length > 0))')"
           echo "Targets: $targets"
@@ -74,7 +79,7 @@ jobs:
       contents: read
     env:
       TARGETS: ${{ needs.analyze.outputs.targets }}
-      FROM_SHA: ${{ needs.analyze.outputs.from }}
+      BASE: ${{ needs.analyze.outputs.trusted }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -83,7 +88,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.BASE_SHA }}
+          ref: ${{ needs.analyze.outputs.trusted }}
           path: ${{ env.TRUSTED }}
           persist-credentials: false
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
@@ -101,7 +106,8 @@ jobs:
           find . -path ./.tf-test-agent -prune -o \
             \( -name CLAUDE.md -o -name CLAUDE.local.md -o -name AGENTS.md -o -name .claude \) -print \
             -exec rm -rf {} +
-          git diff "$FROM_SHA...$HEAD_SHA" -- modules stacks > .tf-test-agent/pr.diff
+          mapfile -t targets < <(jq -r '.[]' <<< "$TARGETS")
+          git diff "$BASE...$HEAD_SHA" -- "${targets[@]}" > .tf-test-agent/pr.diff
 
       - name: Run the agent
         env:
@@ -147,7 +153,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.BASE_SHA }}
+          ref: ${{ needs.analyze.outputs.trusted }}
           path: ${{ env.TRUSTED }}
           persist-credentials: false
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
@@ -205,7 +211,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref }}
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.BASE_SHA }}
+          ref: ${{ needs.analyze.outputs.trusted }}
           path: ${{ env.TRUSTED }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

@@ -15,6 +15,15 @@ locals {
     endpoints = {
       address_prefixes = [cidrsubnet(var.vnet_address_space[0], 8, 1)]
     }
+    functions = {
+      address_prefixes  = [cidrsubnet(var.vnet_address_space[0], 8, 2)]
+      service_endpoints = ["Microsoft.Storage", "Microsoft.KeyVault"]
+      delegation = {
+        name    = "functions"
+        service = "Microsoft.Web/serverFarms"
+        actions = ["Microsoft.Network/virtualNetworks/subnets/action"]
+      }
+    }
   }
 
   lake_endpoints = {
