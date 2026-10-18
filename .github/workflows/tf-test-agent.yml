@@ -3,9 +3,6 @@ name: tf-test-agent
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - "modules/**"
-      - "stacks/**"
 
 permissions: {}
 
@@ -30,6 +27,7 @@ jobs:
       contents: read
     outputs:
       targets: ${{ steps.targets.outputs.targets }}
+      pr_targets: ${{ steps.targets.outputs.pr_targets }}
       trusted: ${{ steps.trusted.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,22 +51,31 @@ jobs:
           BEFORE: ${{ github.event.before }}
           BASE: ${{ steps.trusted.outputs.sha }}
         run: |
-          files="$(git diff --name-only "$BASE...$HEAD_SHA" -- modules stacks)"
-          # On a new push keep only files this push changed. Files merged in from the
-          # base branch are not part of the PR diff, so they drop out. After a force
-          # push, analyze the whole PR.
+          # Changed files to a JSON list of module and stack dirs, plus stacks that call a changed module.
+          to_targets() {
+            local dirs
+            dirs="$(grep -Ev '/tests/|\.md$' | cut -d/ -f1-2 | sort -u || true)"
+            for module in $(grep '^modules/' <<< "$dirs" || true); do
+              dirs+=$'\n'"$(grep -l "\"../../$module\"" stacks/*/*.tf | xargs -r dirname || true)"
+            done
+            sort -u <<< "$dirs" | while read -r d; do if [ -d "$d" ]; then echo "$d"; fi; done \
+              | jq -R -s -c 'split("\n") | map(select(length > 0))'
+          }
+          pr_files="$(git diff --name-only "$BASE...$HEAD_SHA" -- modules stacks)"
+          files="$pr_files"
+          # The agent sees only what this push changed. Files merged in from the base
+          # branch are not in the PR diff, so they drop out. After a force push, all.
           if [ "$ACTION" = synchronize ] \
              && git merge-base --is-ancestor "$BEFORE" "$HEAD_SHA" 2>/dev/null; then
-            files="$(comm -12 <(sort <<< "$files") \
+            files="$(comm -12 <(sort <<< "$pr_files") \
               <(git diff --name-only "$BEFORE" "$HEAD_SHA" -- modules stacks | sort))"
           fi
-          dirs="$(grep -Ev '/tests/|\.md$' <<< "$files" | cut -d/ -f1-2 | sort -u || true)"
-          for module in $(grep '^modules/' <<< "$dirs" || true); do
-            dirs+=$'\n'"$(grep -l "\"../../$module\"" stacks/*/*.tf | xargs -r dirname || true)"
-          done
-          targets="$(sort -u <<< "$dirs" | while read -r d; do if [ -d "$d" ]; then echo "$d"; fi; done | jq -R -s -c 'split("\n") | map(select(length > 0))')"
-          echo "Targets: $targets"
+          # Tests always run for everything the PR changes, so no push can skip them.
+          pr_targets="$(to_targets <<< "$pr_files")"
+          targets="$(to_targets <<< "$files")"
+          echo "Agent targets: $targets, test targets: $pr_targets"
           echo "targets=$targets" >> "$GITHUB_OUTPUT"
+          echo "pr_targets=$pr_targets" >> "$GITHUB_OUTPUT"
 
   agent:
     needs: analyze
@@ -138,12 +145,16 @@ jobs:
 
   verify:
     needs: [analyze, agent]
+    if: >-
+      always() && needs.analyze.result == 'success' && needs.analyze.outputs.pr_targets != '[]'
+      && contains(fromJSON('["success", "skipped"]'), needs.agent.result)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
     env:
       TARGETS: ${{ needs.analyze.outputs.targets }}
+      PR_TARGETS: ${{ needs.analyze.outputs.pr_targets }}
     outputs:
       ok: ${{ steps.verify.outputs.ok }}
     steps:
@@ -161,6 +172,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.agent.result == 'success'
         with:
           name: agent
           path: .tf-test-agent/agent
@@ -178,7 +190,7 @@ jobs:
           TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/tf-plugins
         run: |
           mkdir -p "$TF_PLUGIN_CACHE_DIR"
-          if python3 "$PLUGIN/ci/verify.py" --targets "$TARGETS" \
+          if python3 "$PLUGIN/ci/verify.py" --targets "$TARGETS" --run "$PR_TARGETS" \
                --report .tf-test-agent/agent/report.json --out .tf-test-agent/verify.json; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
           else
@@ -203,6 +215,7 @@ jobs:
       checks: write
     env:
       TARGETS: ${{ needs.analyze.outputs.targets }}
+      PR_TARGETS: ${{ needs.analyze.outputs.pr_targets }}
       VERIFIED: ${{ needs.verify.outputs.ok }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
@@ -257,7 +270,7 @@ jobs:
         env:
           COMMIT: ${{ steps.commit.outputs.commit_hash }}
         run: |
-          python3 "$PLUGIN/ci/render.py" --targets "$TARGETS" \
+          python3 "$PLUGIN/ci/render.py" --targets "$TARGETS" --pr-targets "$PR_TARGETS" \
             --report .tf-test-agent/agent/report.json --verify .tf-test-agent/verify.json \
             --transcript .tf-test-agent/agent/transcript.jsonl \
             --comment .tf-test-agent/comment.md --check .tf-test-agent/check.json \
@@ -277,3 +290,9 @@ jobs:
           conclusion: ${{ steps.render.outputs.conclusion }}
           output: ${{ steps.render.outputs.output }}
           annotations: ${{ steps.render.outputs.annotations }}
+
+      - name: Fail the run when verification failed
+        if: steps.render.outputs.conclusion == 'failure'
+        run: |
+          echo "::error::Verification failed. See the pull request comment."
+          exit 1
