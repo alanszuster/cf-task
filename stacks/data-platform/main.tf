@@ -33,7 +33,7 @@ module "data_lake" {
   location            = var.location
   is_data_lake        = true
   containers          = each.value.containers
-  allowed_subnet_ids  = [module.network.subnet_ids["apps"]]
+  allowed_subnet_ids  = [module.network.subnet_ids["apps"], module.network.subnet_ids["functions"]]
   tags                = local.tags
 }
 
@@ -44,7 +44,7 @@ module "key_vault" {
   resource_group_name = azurerm_resource_group.this.name
   location            = var.location
   tenant_id           = var.tenant_id
-  allowed_subnet_ids  = [module.network.subnet_ids["apps"]]
+  allowed_subnet_ids  = [module.network.subnet_ids["apps"], module.network.subnet_ids["functions"]]
   secret_readers = {
     data_factory = module.data_factory.principal_id
     function_app = module.function_app.principal_id
