@@ -19,7 +19,7 @@ The agent works only in the PR that started the run. It does not open other PRs.
 
 | Decision | Why | What I gave up |
 |---|---|---|
-| Claude Code CLI in headless mode, packed as a plugin | Full control of tools and permissions. One plugin can be used in many repositories. | `claude-code-action` would be less code, but it needs GitHub write access in the agent job. |
+| Claude Code CLI in headless mode, packed as a plugin | Full control of tools and permissions. One plugin can be used in many repositories. | `claude-code-action` would be less code, but it also handles GitHub tokens and comments. I wanted the agent job to have no write access and every CLI flag under my control. |
 | The agent writes tests, CI verifies them | An LLM can say "tests pass" when they do not. The `verify` job runs everything again by itself. | More CI time. |
 | Mutation proof | A passing test can still check nothing. For each new test the agent gives a small realistic bug (a mutation). CI applies it to a copy of the code, and the test must fail. | Agent picks the mutations, so a weak test with a weak mutation is still possible. |
 | Agent, skills and permissions come from the base branch | Code in a PR cannot change the agent, its skills or its permissions. | A change to the agent itself takes effect only after merge. |
@@ -33,7 +33,7 @@ I also tried `--bare` mode for more isolation. It removes the `Skill` and `Write
 ## Security
 
 - Each job has its own minimal permissions. Only `publish` can write, and it runs no Terraform and no code from the PR.
-- The agent can only edit files in `*/tests/` and run two commands: `tf-run-tests` and `tf-mutate`. Everything else is denied (`dontAsk` mode). Tested: it cannot read `.env`, `/proc/self/environ` or files outside the repo.
+- The agent can only edit files in `*/tests/` and run two commands: `tf-run-tests` and `tf-mutate`. It can also read files and run read-only commands like `ls` and `grep` inside the repo. Everything else is denied (`dontAsk` mode). Tested: it cannot read `.env`, `/proc/self/environ` or files outside the repo.
 - Terraform runs with a clean environment, so the API key never reaches it.
 - Tests must mock providers and override `data "external"`, so no test calls Azure or runs repository scripts.
 - `verify` rejects patches that touch other files or remove existing runs or asserts.
@@ -81,7 +81,7 @@ Optional repository variables: `TF_TEST_AGENT_MODEL` (default `haiku`) and `TF_T
 
 Then open a PR that changes `modules/**` or `stacks/**`. The workflow is `.github/workflows/tf-test-agent.yml`.
 
-Run the agent locally (backfill mode, no PR needed):
+Run the agent locally (backfill mode, no PR needed). It needs `claude` (Claude Code CLI), `terraform`, `jq` and `python3`:
 
 ```sh
 export ANTHROPIC_API_KEY=...
@@ -99,7 +99,7 @@ The workflow uses the same script, so a local run behaves like a CI run. The rep
 | `plugins/tf-test-agent/skills/test-authoring/` | How to write tests, what not to test, how to prove them. Has a reference example. |
 | `plugins/tf-test-agent/skills/review-findings/` | How to report problems to reviewers: severity, evidence, no code changes. |
 | `plugins/tf-test-agent/bin/` | `tf-run-tests` and `tf-mutate`, the only commands the agent can run. |
-| `plugins/tf-test-agent/ci/` | Agent permissions, prompt builder, `verify.py`, `render.py`. |
+| `plugins/tf-test-agent/ci/` | `run-agent.sh` (starts the agent in CI and locally), agent permissions, prompt builder, `verify.py`, `render.py`. |
 | `plugins/tf-test-agent/schemas/report.schema.json` | Contract for the agent's report. |
 | `.claude-plugin/marketplace.json` | Lets other repositories install the plugin. |
 
@@ -159,6 +159,7 @@ They cannot show:
 - Branch protection with other required checks will block the bot commit, because no other workflow runs on it.
 - The agent sees only the targets and the diff. A wide change across many modules makes a big prompt.
 - Stack tests cannot load `envs/*.tfvars`, so they copy the few values they need.
+- Stack tests can read module outputs, not resources inside modules. Wiring that no output shows stays untested; the agent reports it.
 
 ## With many more modules, teams or repositories
 
