@@ -87,6 +87,15 @@ module "function_app" {
   tags                          = local.tags
 }
 
+module "private_dns" {
+  source = "../../modules/private-dns-zone"
+
+  zone_names          = values(local.private_dns_zones)
+  resource_group_name = azurerm_resource_group.this.name
+  virtual_network_id  = module.network.vnet_id
+  tags                = local.tags
+}
+
 module "lake_endpoint" {
   source   = "../../modules/private-endpoint"
   for_each = local.lake_endpoints
@@ -97,6 +106,7 @@ module "lake_endpoint" {
   subnet_id           = module.network.subnet_ids["endpoints"]
   target_resource_id  = module.data_lake[each.value.lake].id
   subresource_name    = each.value.sub
+  private_dns_zone_id = module.private_dns.zone_ids[local.private_dns_zones[each.value.sub]]
   tags                = local.tags
 }
 
@@ -109,5 +119,6 @@ module "key_vault_endpoint" {
   subnet_id           = module.network.subnet_ids["endpoints"]
   target_resource_id  = module.key_vault.id
   subresource_name    = "vault"
+  private_dns_zone_id = module.private_dns.zone_ids[local.private_dns_zones["vault"]]
   tags                = local.tags
 }

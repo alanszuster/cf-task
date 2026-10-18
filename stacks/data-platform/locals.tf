@@ -26,6 +26,13 @@ locals {
     }
   }
 
+  # Private DNS zone per endpoint sub-resource, so endpoint names resolve to private IPs.
+  private_dns_zones = {
+    blob  = "privatelink.blob.core.windows.net"
+    dfs   = "privatelink.dfs.core.windows.net"
+    vault = "privatelink.vaultcore.azure.net"
+  }
+
   lake_endpoints = {
     for pair in flatten([
       for lake_key in keys(var.data_lakes) : [
