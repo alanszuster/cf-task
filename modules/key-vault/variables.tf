@@ -25,7 +25,7 @@ variable "secret_readers" {
 }
 
 variable "allowed_subnet_ids" {
-  description = "Subnets that may reach the vault. Everything else is denied."
+  description = "Subnets that may reach the vault through service endpoints. Everything else is denied, except trusted Azure services."
   type        = list(string)
   default     = []
 }
