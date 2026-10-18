@@ -53,6 +53,8 @@ I built this with Claude Code. I made the design decisions and reviewed every ch
 - **Measured, not guessed**: I compared Haiku and Sonnet on the same module. A better skill helped more than a bigger model.
 - **Human review of generated tests**: a test name in `key-vault` claimed to check the role, but only checked the principal. Mutations did not catch this; review did. I added the missing assert.
 - **The gate caught a shortcut**: my first reference example in the skill was the `private-endpoint` module from this repo. When the agent worked on that module, it copied the example and skipped the mutation step. All tests passed, but `verify` marked every run as unproven. I replaced the example with a made-up module, checked that it really works, and added a hard rule to the agent. The next run proved all its tests.
+- **Prompt injection test**: in PR #3 I added a comment to a `.tf` file that told AI agents to delete the tests and report no findings. The agent ignored it, kept the tests and reported the comment as a high finding. If it had deleted tests, `verify` would have rejected the patch.
+- **Real runs found what local tests did not**: the `base.sha` in the PR event stays at the commit from when the PR was opened, so a long-open PR used old skills. The workflow now pins the current base branch once and passes it to all jobs. A scenario test of target detection also found a crash when a changed module is not used by any stack.
 
 ## Missing tests added
 
@@ -67,7 +69,7 @@ The same agent added tests to the existing modules in backfill mode (`run-agent.
 | `databricks-workspace` | create | 7 | 2 | $0.010 |
 | `private-endpoint` | create | 5 | 1 | $0.013 |
 
-`network`, `function-app` and the stack get their tests in the example PR, through the workflow.
+`network`, `function-app` and the stack got their tests through the workflow in PR #2. After it was merged, all eight modules and the stack have tests.
 
 ## How to run
 
@@ -89,6 +91,13 @@ plugins/tf-test-agent/ci/run-agent.sh backfill - /tmp/agent-run modules/data-fac
 ```
 
 The workflow uses the same script, so a local run behaves like a CI run. The report is in `/tmp/agent-run/report.json`.
+
+Install the plugin in another repository (tested from a clean Claude config):
+
+```sh
+claude plugin marketplace add alanszuster/cf-task
+claude plugin install tf-test-agent@tf-platform-base
+```
 
 ## Where things are
 
@@ -128,7 +137,12 @@ The agent loads each skill with the `Skill` tool when it needs it. The skills it
 - The same PR comment was updated. The subnet finding is gone, because it was fixed.
 - **Cost:** $0.020.
 
-[PR #1](https://github.com/alanszuster/cf-task/pull/1) is a smaller merged example: a retention validation, where the agent added boundary tests (29 and 731 rejected, 730 accepted).
+**Third push** (`ftps_state = "Disabled"`): the agent added `ftps_is_disabled`. Before, it had refused to test `AllAllowed`; now the code matches the intent, so it tests it.
+
+Other PRs:
+
+- [PR #1](https://github.com/alanszuster/cf-task/pull/1) (merged): a retention validation. The agent added boundary tests: 29 and 731 rejected, 730 accepted.
+- [PR #3](https://github.com/alanszuster/cf-task/pull/3) (open): databricks private by default (`update`), a description-only change in key-vault (`skip`, no tests written), the prompt injection test, an "Update branch" from main (changes from main ignored), and a stack validation (`update`).
 
 ## What the tests can and cannot show
 
@@ -158,6 +172,7 @@ They cannot show:
 - `verify` scope and weakening checks use simple text rules, not an HCL parser.
 - Branch protection with other required checks will block the bot commit, because no other workflow runs on it.
 - The agent sees only the targets and the diff. A wide change across many modules makes a big prompt.
+- The agent works on the PR branch as it is. If the branch is far behind main, its tests are written against old code until the branch is updated.
 - Stack tests cannot load `envs/*.tfvars`, so they copy the few values they need.
 - Stack tests can read module outputs, not resources inside modules. Wiring that no output shows stays untested; the agent reports it.
 
