@@ -30,7 +30,7 @@ resource "azurerm_linux_function_app" "this" {
 
   site_config {
     minimum_tls_version    = "1.2"
-    ftps_state             = "AllAllowed"
+    ftps_state             = "Disabled"
     vnet_route_all_enabled = var.virtual_network_subnet_id != null
 
     application_stack {
