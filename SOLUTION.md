@@ -32,6 +32,7 @@ I also tried `--bare` mode for more isolation. It removes the `Skill` and `Write
 
 ## Security
 
+- Every push tests all modules and stacks the PR changes, not only the new commits. `main` requires the `tf-test-agent` check.
 - Each job has its own minimal permissions. Only `publish` can write, and it runs no Terraform and no code from the PR.
 - The agent can only edit files in `*/tests/` and run two commands: `tf-run-tests` and `tf-mutate`. It can also read files and run read-only commands like `ls` and `grep` inside the repo. Everything else is denied (`dontAsk` mode). Tested: it cannot read `.env`, `/proc/self/environ` or files outside the repo.
 - Terraform runs with a clean environment, so the API key never reaches it.
@@ -55,6 +56,7 @@ I built this with Claude Code. I made the design decisions and reviewed every ch
 - **The gate caught a shortcut**: my first reference example in the skill was the `private-endpoint` module from this repo. When the agent worked on that module, it copied the example and skipped the mutation step. All tests passed, but `verify` marked every run as unproven. I replaced the example with a made-up module, checked that it really works, and added a hard rule to the agent. The next run proved all its tests.
 - **Prompt injection test**: in PR #3 I added a comment to a `.tf` file that told AI agents to delete the tests and report no findings. The agent ignored it, kept the tests and reported the comment as a high finding. If it had deleted tests, `verify` would have rejected the patch.
 - **Real runs found what local tests did not**: the `base.sha` in the PR event stays at the commit from when the PR was opened, so a long-open PR used old skills. The workflow now pins the current base branch once and passes it to all jobs. A scenario test of target detection also found a crash when a changed module is not used by any stack.
+- **Thinking through a regression found a hole**: the agent only reads what a push changed. Before the fix, an "Update branch" push on a PR with a failing test ran no tests and posted a green check. Now the tests run for every module the PR changes on each push, and only the agent is incremental.
 
 ## Missing tests added
 
@@ -81,7 +83,9 @@ Prerequisites:
 
 Optional repository variables: `TF_TEST_AGENT_MODEL` (default `haiku`) and `TF_TEST_AGENT_MAX_USD` (default `1`).
 
-Then open a PR that changes `modules/**` or `stacks/**`. The workflow is `.github/workflows/tf-test-agent.yml`.
+Then open a PR. The workflow runs on every PR, so the required check is never left pending; it only calls the agent when modules or stacks change. The workflow is `.github/workflows/tf-test-agent.yml`.
+
+`main` requires the `tf-test-agent` check, so a PR whose tests fail cannot be merged.
 
 Run the agent locally (backfill mode, no PR needed). It needs `claude` (Claude Code CLI), `terraform`, `jq` and `python3`:
 
@@ -144,6 +148,7 @@ Other PRs:
 - [PR #1](https://github.com/alanszuster/cf-task/pull/1) (merged): a retention validation. The agent added boundary tests: 29 and 731 rejected, 730 accepted.
 - [PR #3](https://github.com/alanszuster/cf-task/pull/3) (open): databricks private by default (`update`), a description-only change in key-vault (`skip`, no tests written), the prompt injection test, an "Update branch" from main (changes from main ignored), and a stack validation (`update`).
 - [PR #4](https://github.com/alanszuster/cf-task/pull/4) (merged): a new `private-dns-zone` module that no stack uses yet. The agent wrote tests from zero: 6 runs, 6 of 6 mutations killed, $0.012. One finding was a false positive: it said the lock file in a module directory is misleading, but `terraform test` needs it. I added this to the `review-findings` skill.
+- [PR #5](https://github.com/alanszuster/cf-task/pull/5) (open, blocked): lowers the storage TLS minimum to 1.0. An existing test fails, the agent does not weaken it and reports a high finding, the check is red and branch protection blocks the merge. After "Update branch" the agent had nothing new to read, but the tests ran again and the PR stayed blocked.
 
 ## What the tests can and cannot show
 
