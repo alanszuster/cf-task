@@ -82,6 +82,7 @@ module "function_app" {
   location                      = var.location
   storage_account_name          = module.data_lake["raw"].name
   storage_account_id            = module.data_lake["raw"].id
+  virtual_network_subnet_id     = module.network.subnet_ids["functions"]
   public_network_access_enabled = var.public_access_enabled
   tags                          = local.tags
 }

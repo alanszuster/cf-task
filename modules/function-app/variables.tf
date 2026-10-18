@@ -35,6 +35,12 @@ variable "public_network_access_enabled" {
   default     = true
 }
 
+variable "virtual_network_subnet_id" {
+  description = "Subnet for outbound VNet integration, delegated to Microsoft.Web/serverFarms. Leave empty for none."
+  type        = string
+  default     = null
+}
+
 variable "app_settings" {
   description = "Application settings."
   type        = map(string)

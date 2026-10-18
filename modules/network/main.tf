@@ -14,6 +14,19 @@ resource "azurerm_subnet" "this" {
   virtual_network_name = azurerm_virtual_network.this.name
   address_prefixes     = each.value.address_prefixes
   service_endpoints    = each.value.service_endpoints
+
+  dynamic "delegation" {
+    for_each = each.value.delegation == null ? [] : [each.value.delegation]
+
+    content {
+      name = delegation.value.name
+
+      service_delegation {
+        name    = delegation.value.service
+        actions = delegation.value.actions
+      }
+    }
+  }
 }
 
 resource "azurerm_network_security_group" "this" {

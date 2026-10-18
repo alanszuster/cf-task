@@ -28,6 +28,11 @@ variable "subnets" {
   type = map(object({
     address_prefixes  = list(string)
     service_endpoints = optional(list(string), [])
+    delegation = optional(object({
+      name    = string
+      service = string
+      actions = optional(list(string), [])
+    }))
   }))
 }
 

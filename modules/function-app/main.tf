@@ -22,14 +22,16 @@ resource "azurerm_linux_function_app" "this" {
 
   https_only                    = true
   public_network_access_enabled = var.public_network_access_enabled
+  virtual_network_subnet_id     = var.virtual_network_subnet_id
 
   identity {
     type = "SystemAssigned"
   }
 
   site_config {
-    minimum_tls_version = "1.2"
-    ftps_state          = "AllAllowed"
+    minimum_tls_version    = "1.2"
+    ftps_state             = "AllAllowed"
+    vnet_route_all_enabled = var.virtual_network_subnet_id != null
 
     application_stack {
       python_version = var.python_version
