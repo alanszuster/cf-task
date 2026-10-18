@@ -35,6 +35,15 @@ run "is_https_only_with_tls_12_and_managed_identity" {
   }
 }
 
+run "ftps_is_disabled" {
+  command = plan
+
+  assert {
+    condition     = azurerm_linux_function_app.this.site_config[0].ftps_state == "Disabled"
+    error_message = "FTP and FTPS deployment must be disabled; the app must not accept plain FTP credentials."
+  }
+}
+
 run "runtime_storage_role_is_scoped_to_the_storage_account" {
   command = plan
 
