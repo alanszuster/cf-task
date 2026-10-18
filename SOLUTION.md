@@ -120,7 +120,27 @@ The agent loads each skill with the `Skill` tool when it needs it. The skills it
 
 ## Example run
 
-[PR #2](https://github.com/alanszuster/cf-task/pull/2) adds VNet integration to the function app: optional subnet delegation in `network`, an optional `virtual_network_subnet_id` in `function-app`, and a new delegated `functions` subnet in the stack.
+Two open PRs show the final version of the workflow:
+
+**[PR #6](https://github.com/alanszuster/cf-task/pull/6), green.** It connects the stack's private endpoints to the private DNS zones from the `private-dns-zone` module.
+
+- **Targets:** `stacks/data-platform`. Decision `update`: the new wiring had no tests.
+- **Skills used:** `change-analysis`, `test-authoring`, `review-findings`.
+- **Tests added:** the stack creates the three privatelink zones, and every data lake gets a `blob` and a `dfs` endpoint. CI: 4 tests pass, 2 of 2 mutations killed. The bot committed the tests; the check is green and the PR can be merged.
+- **Finding (medium):** which zone each endpoint uses is inside a module and no output shows it, so it cannot be tested from the stack.
+- **Second push:** I added an output for the zone IDs. The agent analyzed the PR again and the same comment was updated.
+- **Cost:** $0.008 and $0.007.
+
+**[PR #7](https://github.com/alanszuster/cf-task/pull/7), red and blocked.** It turns off purge protection on the key vault "for faster cleanup".
+
+- The existing run `vault_uses_rbac_and_purge_protection` fails. The agent does not change it: the code is wrong, not the test.
+- **Finding (high):** purge protection disabled; deleted secrets could be purged right away.
+- The check is red, the run fails and branch protection blocks the merge.
+- **Second push:** a description-only change. The agent analyzed it again, the tests of the whole PR still fail, and the PR stays blocked.
+
+### Full cycle in detail
+
+[PR #2](https://github.com/alanszuster/cf-task/pull/2) (merged) adds VNet integration to the function app: optional subnet delegation in `network`, an optional `virtual_network_subnet_id` in `function-app`, and a new delegated `functions` subnet in the stack.
 
 **First push** (the change):
 
@@ -146,9 +166,8 @@ The agent loads each skill with the `Skill` tool when it needs it. The skills it
 Other PRs:
 
 - [PR #1](https://github.com/alanszuster/cf-task/pull/1) (merged): a retention validation. The agent added boundary tests: 29 and 731 rejected, 730 accepted.
-- [PR #3](https://github.com/alanszuster/cf-task/pull/3) (open): databricks private by default (`update`), a description-only change in key-vault (`skip`, no tests written), the prompt injection test, an "Update branch" from main (changes from main ignored), and a stack validation (`update`).
 - [PR #4](https://github.com/alanszuster/cf-task/pull/4) (merged): a new `private-dns-zone` module that no stack uses yet. The agent wrote tests from zero: 6 runs, 6 of 6 mutations killed, $0.012. One finding was a false positive: it said the lock file in a module directory is misleading, but `terraform test` needs it. I added this to the `review-findings` skill.
-- [PR #5](https://github.com/alanszuster/cf-task/pull/5) (open, blocked): lowers the storage TLS minimum to 1.0. An existing test fails, the agent does not weaken it and reports a high finding, the check is red and branch protection blocks the merge. After "Update branch" the agent had nothing new to read, but the tests ran again and the PR stayed blocked.
+- [PR #3](https://github.com/alanszuster/cf-task/pull/3) and [PR #5](https://github.com/alanszuster/cf-task/pull/5) (closed): test runs from while the workflow was still changing. #3 shows a description-only change (`skip`), the prompt injection test and an "Update branch" from main. #5 is a TLS 1.0 regression; it found the hole where "Update branch" skipped the tests.
 
 ## What the tests can and cannot show
 
