@@ -28,6 +28,39 @@ run "retention_in_days_is_passed_through" {
   }
 }
 
+run "retention_below_30_days_is_rejected" {
+  command = plan
+
+  variables {
+    retention_in_days = 29
+  }
+
+  expect_failures = [var.retention_in_days]
+}
+
+run "retention_above_730_days_is_rejected" {
+  command = plan
+
+  variables {
+    retention_in_days = 731
+  }
+
+  expect_failures = [var.retention_in_days]
+}
+
+run "retention_at_730_days_is_accepted" {
+  command = plan
+
+  variables {
+    retention_in_days = 730
+  }
+
+  assert {
+    condition     = azurerm_log_analytics_workspace.this.retention_in_days == 730
+    error_message = "730 days is the PerGB2018 maximum and must be accepted."
+  }
+}
+
 run "output_id_points_at_the_workspace" {
   command = apply
 
