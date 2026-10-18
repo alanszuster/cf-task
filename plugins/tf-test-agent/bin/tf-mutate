@@ -72,7 +72,7 @@ def prove(root, target, file, find, replace, expect=None):
         copy = Path(tmp) / "repo"
         home = Path(tmp) / "home"
         home.mkdir()
-        shutil.copytree(root, copy, ignore=shutil.ignore_patterns(".git", ".terraform", ".tf-test-agent"))
+        shutil.copytree(root, copy, ignore=shutil.ignore_patterns(".git", ".terraform", ".tf-test-agent", ".env"))
         (copy / file).write_text(source.replace(find, replace, 1))
 
         workdir = copy / target

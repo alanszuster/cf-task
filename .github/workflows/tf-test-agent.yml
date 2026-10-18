@@ -96,6 +96,11 @@ jobs:
 
       - name: Prepare the agent's input
         run: |
+          # Agent instructions in the PR would be loaded as context. --bare would skip
+          # them, but it also removes the Skill and Write tools the agent needs.
+          find . -path ./.tf-test-agent -prune -o \
+            \( -name CLAUDE.md -o -name CLAUDE.local.md -o -name AGENTS.md -o -name .claude \) -print \
+            -exec rm -rf {} +
           git diff "$FROM_SHA...$HEAD_SHA" -- modules stacks > .tf-test-agent/pr.diff
           mapfile -t targets < <(jq -r '.[]' <<< "$TARGETS")
           "$PLUGIN/ci/prompt.sh" pr .tf-test-agent/pr.diff "${targets[@]}" > .tf-test-agent/prompt.txt
@@ -110,12 +115,11 @@ jobs:
         run: |
           mkdir -p "$TF_PLUGIN_CACHE_DIR"
           status=0
-          # --bare: no CLAUDE.md, hooks or settings from the PR checkout.
           claude -p "$(cat .tf-test-agent/prompt.txt)" \
-            --bare \
             --plugin-dir "$PLUGIN" \
             --agent tf-test-agent:test-engineer \
             --settings "$PLUGIN/ci/claude-settings.json" \
+            --setting-sources user \
             --model "$MODEL" \
             --max-turns 40 \
             --max-budget-usd "$MAX_USD" \

@@ -1,4 +1,5 @@
 {
+  "apiKeyHelper": "printenv ANTHROPIC_API_KEY",
   "permissions": {
     "defaultMode": "dontAsk",
     "allow": [
@@ -9,7 +10,8 @@
       "Bash(tf-mutate:*)"
     ],
     "deny": [
-      "Read(//proc/**)"
+      "Read(//proc/**)",
+      "Read(**/.env)"
     ]
   },
   "env": {
