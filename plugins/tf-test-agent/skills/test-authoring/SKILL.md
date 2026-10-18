@@ -39,6 +39,13 @@ Use `command = plan` by default. Use `command = apply` only to check outputs or 
 6. Outputs: wired to the right attribute.
 7. For a stack: properties per environment (for example that prod disables public access) and wiring between modules (for example that each lake gets `blob` and `dfs` endpoints). A run cannot load `envs/*.tfvars`, so put the few values a run needs in its `variables` block and keep them aligned with the environment file.
 
+## Testing a stack
+
+- Assertions can read resources of the stack itself, outputs of the modules it calls (`module.network.subnet_ids["functions"]`) and module instances of a `for_each` (`length(module.lake_endpoint)`, `keys(module.lake_endpoint)`).
+- They cannot read resources inside a module (`module.function_app.azurerm_linux_function_app.this`). When the wiring you need is not in any output, report it as a finding and suggest the output; do not skip what outputs already show.
+- Use `command = plan`. Under `apply`, mocked IDs from one resource often fail validation in another.
+- Override every `data "external"` of called modules with its full address, for example `module.function_app.data.external.build_info`.
+
 ## What not to test
 
 - An input passed unchanged to an argument (`name = var.name`). Terraform does that; a test adds nothing. Test it only when the value is transformed, combined or follows a convention.
