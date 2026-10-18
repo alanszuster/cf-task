@@ -22,11 +22,11 @@ The agent works only in the PR that started the run. It does not open other PRs.
 | Claude Code CLI in headless mode, packed as a plugin | Full control of tools and permissions. One plugin can be used in many repositories. | `claude-code-action` would be less code, but it needs GitHub write access in the agent job. |
 | The agent writes tests, CI verifies them | An LLM can say "tests pass" when they do not. The `verify` job runs everything again by itself. | More CI time. |
 | Mutation proof | A passing test can still check nothing. For each new test the agent gives a small realistic bug (a mutation). CI applies it to a copy of the code, and the test must fail. | Agent picks the mutations, so a weak test with a weak mutation is still possible. |
-| Agent, skills and permissions come from the base branch | A PR cannot change the rules it is checked by. | A change to the agent itself takes effect only after merge. |
+| Agent, skills and permissions come from the base branch | Code in a PR cannot change the agent, its skills or its permissions. | A change to the agent itself takes effect only after merge. |
 | Tests describe intended behavior | If code does something wrong (for example `ftps_state = "AllAllowed"`), the agent does not write a test that confirms it. It reports a finding. | Some code stays untested until a person decides. |
 | Haiku as default model | Measured on one module: with a good skill, Haiku tests were as good as Sonnet tests, for about 10% of the cost. | Less reasoning for complex changes. Sonnet can be set with a repo variable. |
 | Code is put into the prompt | The agent does not spend turns finding files. Cheaper than an MCP server, whose tool definitions are sent every turn. | Big targets make a big prompt. |
-| Tests are committed with `GITHUB_TOKEN` | No extra app or token to manage. | Commits made with `GITHUB_TOKEN` do not start other workflows. The run posts its own check on the new commit. |
+| Tests are committed with `GITHUB_TOKEN` | No extra app or token to manage. | Other checks do not run on the bot commit. The bot commit has `[skip actions]`, and the run posts its own check on it. |
 
 I also tried `--bare` mode for more isolation. It removes the `Skill` and `Write` tools, so I did not use it. The workflow deletes `CLAUDE.md` and `.claude/` from the PR checkout instead.
 
@@ -38,8 +38,9 @@ I also tried `--bare` mode for more isolation. It removes the `Skill` and `Write
 - Tests must mock providers and override `data "external"`, so no test calls Azure or runs repository scripts.
 - `verify` rejects patches that touch other files or remove existing runs or asserts.
 - Text from the model is escaped before it goes to the PR comment (no HTML, mentions or links).
-- Actions are pinned to commit SHAs. Claude Code and Terraform versions are pinned.
+- Actions are pinned to commit SHAs, because a tag can be moved to other code. Dependabot keeps the SHAs up to date. Claude Code and Terraform versions are pinned too.
 - PRs from forks and drafts are skipped. Forks get no secrets anyway.
+- For `pull_request` events GitHub takes the workflow file from the PR itself. Someone with write access could change it in a PR. `CODEOWNERS` covers `.github/` and `plugins/`; with branch protection that requires a code owner review, such a change cannot be merged unreviewed.
 
 ## How I used an LLM to build this
 
@@ -106,15 +107,28 @@ The agent loads each skill with the `Skill` tool when it needs it. The skills it
 
 ## Example run
 
-[PR #1](https://github.com/alanszuster/cf-task/pull/1) adds a validation for `retention_in_days` (30 to 730) in `log-analytics-workspace`.
+[PR #2](https://github.com/alanszuster/cf-task/pull/2) adds VNet integration to the function app: optional subnet delegation in `network`, an optional `virtual_network_subnet_id` in `function-app`, and a new delegated `functions` subnet in the stack.
 
-- **Targets:** the module and `stacks/data-platform`, because the stack calls the module.
-- **Decisions:** module `update`, because the new validation had no tests. Stack `skip`, because it does not pass retention and the default still passes.
+**First push** (the change):
+
+- **Targets:** `network`, `function-app` and `stacks/data-platform`.
+- **Decisions:** `function-app` create (no tests before), `network` update (the new delegation block had no tests), stack create.
 - **Skills used:** `change-analysis`, `test-authoring`, `review-findings`.
-- **Tests added:** 29 days rejected, 731 days rejected, 730 days accepted. The lower bound was already covered by an existing run.
-- **Verification by CI:** 6 of 6 tests pass, 3 of 3 mutations killed.
-- **Finding (info):** every environment, also prod, gets the 30 day minimum. It is a business decision, so the agent only asks.
-- **Cost:** $0.005, 11 turns.
+- **Verification by CI:** 11 tests pass, 10 of 10 mutations killed. Tests committed by the bot to the PR branch.
+- **Findings:**
+  - medium: the new `functions` subnet is not allowed on the data lake and the key vault, so the function app would likely be blocked at runtime. I had left this out on purpose; the agent also found the key vault part.
+  - medium: `ftps_state = "AllAllowed"`. Not put in a test, because a test would confirm the defect.
+  - low: my variable description said "leave empty", but an empty string turns routing on.
+- **Cost:** $0.024, 26 turns.
+
+**Second push** (my fixes after reading the findings):
+
+- Only the new commit was analyzed. Targets: `function-app` and the stack.
+- `function-app` update: one run for the new empty-string validation. Stack `skip`: the allow-lists are inside modules and no output shows them, so the agent explained why and suggested an output instead of guessing.
+- The same PR comment was updated. The subnet finding is gone, because it was fixed.
+- **Cost:** $0.020.
+
+[PR #1](https://github.com/alanszuster/cf-task/pull/1) is a smaller merged example: a retention validation, where the agent added boundary tests (29 and 731 rejected, 730 accepted).
 
 ## What the tests can and cannot show
 
@@ -142,7 +156,7 @@ They cannot show:
 
 - The model is not deterministic. Two runs on the same change can give different tests. The checks in `verify` are deterministic.
 - `verify` scope and weakening checks use simple text rules, not an HCL parser.
-- Branch protection with other required checks will block the bot commit, because `GITHUB_TOKEN` commits do not start other workflows.
+- Branch protection with other required checks will block the bot commit, because no other workflow runs on it.
 - The agent sees only the targets and the diff. A wide change across many modules makes a big prompt.
 - Stack tests cannot load `envs/*.tfvars`, so they copy the few values they need.
 

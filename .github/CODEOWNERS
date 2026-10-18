@@ -1,0 +1,4 @@
+# Changes to the agent and its workflow need a review from the owner.
+/.github/ @alanszuster
+/plugins/ @alanszuster
+/.claude-plugin/ @alanszuster

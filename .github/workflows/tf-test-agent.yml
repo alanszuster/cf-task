@@ -242,6 +242,8 @@ jobs:
 
             Verified by CI: scope, test run and mutation proof.
             Run: ${{ env.RUN_URL }}
+
+            [skip actions]
           commit_author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
 
       - id: render
