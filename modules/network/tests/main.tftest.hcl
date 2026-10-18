@@ -49,6 +49,41 @@ run "names_follow_the_convention" {
   }
 }
 
+run "delegates_only_the_subnets_that_ask_for_it" {
+  command = plan
+
+  variables {
+    subnets = {
+      functions = {
+        address_prefixes = ["10.10.2.0/24"]
+        delegation = {
+          name    = "functions"
+          service = "Microsoft.Web/serverFarms"
+          actions = ["Microsoft.Network/virtualNetworks/subnets/action"]
+        }
+      }
+      plain = {
+        address_prefixes = ["10.10.3.0/24"]
+      }
+    }
+  }
+
+  assert {
+    condition     = length(azurerm_subnet.this["functions"].delegation) == 1
+    error_message = "A subnet with a delegation input must get exactly one delegation block."
+  }
+
+  assert {
+    condition     = azurerm_subnet.this["functions"].delegation[0].service_delegation[0].name == "Microsoft.Web/serverFarms"
+    error_message = "The delegation must target the service given in the input."
+  }
+
+  assert {
+    condition     = length(azurerm_subnet.this["plain"].delegation) == 0
+    error_message = "A subnet without a delegation input must not be delegated."
+  }
+}
+
 run "rejects_invalid_address_space" {
   command = plan
 
