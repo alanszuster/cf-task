@@ -93,3 +93,13 @@ run "no_vnet_integration_without_a_subnet" {
     error_message = "VNet routing must stay disabled when there is no subnet."
   }
 }
+
+run "rejects_an_empty_string_subnet_instead_of_null" {
+  command = plan
+
+  variables {
+    virtual_network_subnet_id = ""
+  }
+
+  expect_failures = [var.virtual_network_subnet_id]
+}
