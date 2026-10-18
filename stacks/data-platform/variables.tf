@@ -37,7 +37,12 @@ variable "data_lakes" {
 }
 
 variable "public_access_enabled" {
-  description = "Allow public network access to the platform services. Meant for dev only."
+  description = "Allow public network access to the platform services. Allowed only in dev."
   type        = bool
   default     = false
+
+  validation {
+    condition     = !var.public_access_enabled || var.environment == "dev"
+    error_message = "Public access can be turned on only in the dev environment."
+  }
 }
