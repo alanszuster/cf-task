@@ -65,30 +65,35 @@ def main():
     p = argparse.ArgumentParser()
     for name in ("targets", "report", "verify", "transcript", "comment", "check"):
         p.add_argument(f"--{name}", required=True)
+    p.add_argument("--pr-targets", help="every target of the PR; their tests ran (default: --targets)")
     p.add_argument("--commit", default="")
     p.add_argument("--run-url", default="")
     o = p.parse_args()
 
-    targets = json.loads(o.targets)
+    agent_targets = json.loads(o.targets)
+    targets = json.loads(o.pr_targets) if o.pr_targets else agent_targets
     report = load(o.report, {})
     verify = load(o.verify, {})
     skills, tools, result = transcript_stats(o.transcript)
     findings = report.get("findings", [])
-    agent_ok = bool(report)
-    verified = agent_ok and verify.get("ok", False)
+    verified = False
 
+    # The comment is always updated, so it never shows results of code that is gone.
     if not targets:
-        # Still update the comment, so it never shows results of code that is gone.
         verified = True
-        headline = "✅ No module or stack changes in this push need tests."
-    elif not agent_ok:
+        headline = "✅ This PR changes no modules or stacks."
+    elif agent_targets and not report:
         headline = "❌ The agent did not return a valid report. Nothing was committed."
-    elif not verified:
-        headline = "❌ Verification failed. The agent's tests were **not** committed."
-    elif o.commit:
-        headline = f"✅ Tests verified and committed in {o.commit[:7]}."
+    elif not verify.get("ok", False):
+        headline = "❌ Verification failed. Nothing was committed."
     else:
-        headline = "✅ Verified. No test changes were needed."
+        verified = True
+        if o.commit:
+            headline = f"✅ Tests verified and committed in {o.commit[:7]}."
+        elif not agent_targets:
+            headline = "✅ No new changes in this push need the agent. All tests of this PR pass."
+        else:
+            headline = "✅ Verified. No test changes were needed."
 
     lines = ["## 🧪 Terraform test agent", "", headline, ""]
 
@@ -99,7 +104,10 @@ def main():
     by_target = {t.get("path"): t for t in report.get("targets", [])}
     for target in targets:
         t = by_target.get(target, {})
-        decision = f'**{t["decision"]}**: {text(t["reason"])}' if t else "not reported"
+        if t:
+            decision = f'**{t["decision"]}**: {text(t["reason"])}'
+        else:
+            decision = "not reported" if target in agent_targets else "no new changes in this push"
         test = tests.get(target)
         if not test:
             test_cell = "not run"
@@ -114,14 +122,15 @@ def main():
     lines.append("")
 
     failed = {k: v for k, v in verify.get("checks", {}).items() if v}
-    if failed:
+    failing_tests = {t: r for t, r in tests.items() if not r["ok"]}
+    if failed or failing_tests:
         lines += ["### Verification problems", ""]
         for check, problems in failed.items():
             lines += [f"- **{check}**: {text(p)}" for p in problems]
+        lines += [f"- **tests**: `{t}` fails: {text(r['summary'])}" for t, r in failing_tests.items()]
         lines.append("")
-        for target, test in tests.items():
-            if not test["ok"]:
-                lines += [f"<details><summary>Test output for <code>{target}</code></summary>", "", code(test["log_tail"]), "", "</details>", ""]
+        for target, test in failing_tests.items():
+            lines += [f"<details><summary>Test output for <code>{target}</code></summary>", "", code(test["log_tail"]), "", "</details>", ""]
 
     runs = [(t["path"], r) for t in report.get("targets", []) for r in t.get("runs", [])]
     if runs:

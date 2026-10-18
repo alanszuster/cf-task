@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Verifies the agent's work without trusting its report.
 
-  verify.py --targets '<json array>' --report report.json --out verify.json [--scope-only]
+  verify.py --targets '<json>' [--run '<json>'] --report report.json --out verify.json [--scope-only]
+
+--targets are the agent's targets: its patch may touch only their tests.
+--run are the targets whose tests run, by default the same. CI passes every
+target of the PR, so a push the agent skips is still tested.
 
 Run from the repository root after the agent's patch is applied. Checks:
 
@@ -109,26 +113,30 @@ def run_proof(report_path, tools):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--targets", required=True)
+    parser.add_argument("--run")
     parser.add_argument("--report", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--scope-only", action="store_true")
     opts = parser.parse_args()
 
     targets = json.loads(opts.targets)
+    run_targets = json.loads(opts.run) if opts.run else targets
     tools = str(Path(__file__).resolve().parent.parent / "bin")
     paths = changed_paths()
 
     result = {"changed_files": paths, "checks": {}}
     result["checks"]["scope"] = check_scope(targets, paths)
     result["checks"]["no_weaken"] = check_no_weaken(paths)
-    result["checks"]["mocks"] = check_mocks(targets)
+    result["checks"]["mocks"] = check_mocks(run_targets)
     ok = not any(result["checks"].values())
 
     if not opts.scope_only:
-        result["tests"] = run_tests(targets, tools)
+        result["tests"] = run_tests(run_targets, tools)
         ok = ok and all(t["ok"] for t in result["tests"].values())
         # Mutations run only against tests that pass; otherwise every mutation looks killed.
-        result["mutations"] = run_proof(opts.report, tools) if ok else []
+        report = Path(opts.report)
+        agent_ran = report.is_file() and report.stat().st_size > 0
+        result["mutations"] = run_proof(opts.report, tools) if ok and agent_ran else []
         unproven = [m for m in result["mutations"] if m["status"] != "killed"]
         result["checks"]["proof"] = [f'{m.get("target")}: run {m.get("expect")} {m["status"]}' for m in unproven]
         ok = ok and not unproven
