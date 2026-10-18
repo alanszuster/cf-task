@@ -8,7 +8,7 @@ description: Write `terraform test` files that encode intended behavior, run the
 ## Layout
 
 - Tests live in `<target>/tests/main.tftest.hcl`. Add another `*.tftest.hcl` file only for a separate concern, for example `validation.tftest.hcl`.
-- Keep shared inputs in one place. For a target without tests, put them in `<target>/tests/terraform.tfvars`, which `terraform test` loads automatically. When an existing test file has a file-level `variables {}` block, keep using it. Put a `variables {}` block inside a `run` only for what that scenario changes.
+- Shared inputs go in `<target>/tests/terraform.tfvars`, which `terraform test` loads automatically. A new test file has no file-level `variables {}` block. Only when you update an existing file that already has one, keep it as it is. Put a `variables {}` block inside a `run` only for what that scenario changes.
 - Assertions compare with `var.*` or with a value the convention defines, for example `"pe-${var.name}"`. Do not repeat input literals in assertions.
 
 ## Providers and side effects
@@ -38,6 +38,14 @@ Use `command = plan` by default. Use `command = apply` only to check outputs or 
 5. Naming conventions from the README.
 6. Outputs: wired to the right attribute.
 7. For a stack: properties per environment (for example that prod disables public access) and wiring between modules (for example that each lake gets `blob` and `dfs` endpoints). A run cannot load `envs/*.tfvars`, so put the few values a run needs in its `variables` block and keep them aligned with the environment file.
+
+## What not to test
+
+- An input passed unchanged to an argument (`name = var.name`). Terraform does that; a test adds nothing. Test it only when the value is transformed, combined or follows a convention.
+- A hardcoded value whose meaning you cannot state. Assert a literal only when you can say in `error_message` why it matters, for example a security setting or a cost tier the stack relies on.
+- Defaults no caller relies on. Check how the stack calls the module first.
+
+A small module may need only two or three runs. That is a good result, not a gap.
 
 ## Intent, not the current state
 
@@ -69,5 +77,5 @@ See [reference.md](reference.md) for a complete example.
    - `survived`: the run does not catch it. Strengthen the run or choose the regression the run is really about.
    - `invalid`: the text is not found exactly once, or the mutated code does not validate. A syntax error proves nothing; mutate a value, a condition or a reference.
 
-   Good mutations: flip a boolean, change a name prefix, drop a `for_each` filter, make a condition always true, swap a reference for another variable. One mutation per run is enough when it hits the property the run is named after.
+   A mutation must be a mistake a person could realistically make in a pull request: flip a security boolean, change a name prefix, drop a `for_each` filter, make a condition always true, lower a retention, point an output at the wrong attribute. Swapping an argument for an unrelated variable is not realistic and proves nothing about the run. One mutation per run is enough when it hits the property the run is named after.
 3. Report each run with its mutations. CI repeats the test run and every mutation, independently of you.
