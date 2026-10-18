@@ -77,7 +77,11 @@ def main():
     agent_ok = bool(report)
     verified = agent_ok and verify.get("ok", False)
 
-    if not agent_ok:
+    if not targets:
+        # Still update the comment, so it never shows results of code that is gone.
+        verified = True
+        headline = "✅ No module or stack changes in this push need tests."
+    elif not agent_ok:
         headline = "❌ The agent did not return a valid report. Nothing was committed."
     elif not verified:
         headline = "❌ Verification failed. The agent's tests were **not** committed."
@@ -90,7 +94,8 @@ def main():
 
     tests = verify.get("tests", {})
     mutations = verify.get("mutations", [])
-    lines += ["| Target | Decision | Tests (re-run by CI) | Mutation proof |", "|---|---|---|---|"]
+    if targets:
+        lines += ["| Target | Decision | Tests (re-run by CI) | Mutation proof |", "|---|---|---|---|"]
     by_target = {t.get("path"): t for t in report.get("targets", [])}
     for target in targets:
         t = by_target.get(target, {})
@@ -173,8 +178,7 @@ def main():
     # json.dumps escapes newlines, so model text cannot inject extra outputs.
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-            for key, value in check.items():
-                out.write(f"{key}={value if isinstance(value, str) else json.dumps(value)}\n")
+            out.writelines(f"{k}={v if isinstance(v, str) else json.dumps(v)}\n" for k, v in check.items())
 
 
 if __name__ == "__main__":

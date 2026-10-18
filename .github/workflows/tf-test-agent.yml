@@ -194,7 +194,7 @@ jobs:
 
   publish:
     needs: [analyze, agent, verify]
-    if: always() && needs.analyze.result == 'success' && needs.analyze.outputs.targets != '[]'
+    if: always() && needs.analyze.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
