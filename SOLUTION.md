@@ -69,7 +69,7 @@ The same agent added tests to the existing modules in backfill mode (`run-agent.
 | `databricks-workspace` | create | 7 | 2 | $0.010 |
 | `private-endpoint` | create | 5 | 1 | $0.013 |
 
-`network`, `function-app` and the stack got their tests through the workflow in PR #2. After it was merged, all eight modules and the stack have tests.
+`network`, `function-app` and the stack got their tests through the workflow in PR #2. After it was merged, all eight modules and the stack have tests. The new `private-dns-zone` module from PR #4 got its tests the same way.
 
 ## How to run
 
@@ -143,6 +143,7 @@ Other PRs:
 
 - [PR #1](https://github.com/alanszuster/cf-task/pull/1) (merged): a retention validation. The agent added boundary tests: 29 and 731 rejected, 730 accepted.
 - [PR #3](https://github.com/alanszuster/cf-task/pull/3) (open): databricks private by default (`update`), a description-only change in key-vault (`skip`, no tests written), the prompt injection test, an "Update branch" from main (changes from main ignored), and a stack validation (`update`).
+- [PR #4](https://github.com/alanszuster/cf-task/pull/4) (merged): a new `private-dns-zone` module that no stack uses yet. The agent wrote tests from zero: 6 runs, 6 of 6 mutations killed, $0.012. One finding was a false positive: it said the lock file in a module directory is misleading, but `terraform test` needs it. I added this to the `review-findings` skill.
 
 ## What the tests can and cannot show
 
@@ -173,6 +174,7 @@ They cannot show:
 - Branch protection with other required checks will block the bot commit, because no other workflow runs on it.
 - The agent sees only the targets and the diff. A wide change across many modules makes a big prompt.
 - The agent works on the PR branch as it is. If the branch is far behind main, its tests are written against old code until the branch is updated.
+- Loading skills is an instruction, not a rule CI checks. In one run the agent wrote findings without loading `review-findings`. The PR comment shows which skills were loaded, so a reviewer can see it.
 - Stack tests cannot load `envs/*.tfvars`, so they copy the few values they need.
 - Stack tests can read module outputs, not resources inside modules. Wiring that no output shows stays untested; the agent reports it.
 

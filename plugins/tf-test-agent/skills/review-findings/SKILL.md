@@ -19,6 +19,8 @@ A finding is something a reviewer should know before merging. You describe it; p
 
 Do not report formatting, naming taste or anything you cannot point to in the code.
 
+Do not report a `.terraform.lock.hcl` in a module directory. Callers ignore it, but `terraform test` runs the module as the root configuration, so a module with tests needs its own lock file.
+
 ## Severity
 
 - `high`: exploitable exposure, data loss, or a production apply or runtime failure.
