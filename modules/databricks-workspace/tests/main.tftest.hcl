@@ -31,6 +31,15 @@ run "public_access_follows_input" {
   }
 }
 
+run "public_access_is_off_by_default" {
+  command = plan
+
+  assert {
+    condition     = azurerm_databricks_workspace.this.public_network_access_enabled == false
+    error_message = "Public network access must be off when the caller does not set it; the default is the secure baseline."
+  }
+}
+
 run "default_sku_is_premium" {
   command = plan
 
