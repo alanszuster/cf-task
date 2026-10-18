@@ -29,3 +29,14 @@ run "rejects_an_unknown_environment" {
 
   expect_failures = [var.environment]
 }
+
+run "rejects_public_access_outside_dev" {
+  command = plan
+
+  variables {
+    environment           = "uat"
+    public_access_enabled = true
+  }
+
+  expect_failures = [var.public_access_enabled]
+}
