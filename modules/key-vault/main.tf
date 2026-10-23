@@ -6,7 +6,7 @@ resource "azurerm_key_vault" "this" {
   sku_name            = "standard"
 
   rbac_authorization_enabled = true
-  purge_protection_enabled   = true
+  purge_protection_enabled   = false
   soft_delete_retention_days = 30
 
   network_acls {
